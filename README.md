@@ -1,0 +1,2 @@
+# EOLES-Dispatch
+EOLES-Dispatch is an cost minimization dispatch model aimed at simulating realistic wholesale electricity prices at an hourly time-step for the French power system. It takes as input a detailed description of the installed generation capacity and time series of determinants of the power dispatch such as hourly demand, renewables availability, hydro resources, nuclear maintenance planning or fossil fuel price variations.
