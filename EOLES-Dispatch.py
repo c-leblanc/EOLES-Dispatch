@@ -440,7 +440,7 @@ del load_factor, exoPrices, nmd
 #You can remove the '#' in the third line to save the output of the solver in a text file
 
 start_time = time.time()
-opt = SolverFactory('gurobi')
+opt = SolverFactory('cbc.exe')
 results = opt.solve(model, tee=True)
 print("Execution time (in seconds) : ",(time.time() - start_time))
 # model.display(filename="raw_output.txt")
