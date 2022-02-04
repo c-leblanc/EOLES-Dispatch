@@ -87,6 +87,14 @@ offshore_CU[is.na(offshore_CU)] <- 0
 offshore_NT[is.na(offshore_NT)] <- 0
 offshore_LT[is.na(offshore_LT)] <- 0
 
+pv <- pv %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+onshore_CU <- onshore_CU %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+onshore_NT <- onshore_NT %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+offshore_CU <- offshore_CU %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+offshore_NT <- offshore_NT %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+offshore_LT <- offshore_LT %>% filter(hour>=as.POSIXct("2015/01/01",tz="UTC")) %>% filter(hour<as.POSIXct("2020/01/01",tz="UTC"))
+
+
 write.table(pv,file="pv.csv",sep=",",dec=".",quote=F,row.names = FALSE)
 write.table(onshore_CU,file="onshore_CU.csv",sep=",",dec=".",quote=F,row.names = FALSE)
 write.table(onshore_NT,file="onshore_NT.csv",sep=",",dec=".",quote=F,row.names = FALSE)
