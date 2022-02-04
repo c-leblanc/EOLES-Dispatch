@@ -17,6 +17,8 @@ EOLES-Dispatch is an cost minimization dispatch model aimed at simulating realis
 - dir .\renewable_ninja\ - Capacity factors for wind and solar in each country; Source: https://renewables.ninja
 - dir .\inputs\ - Empty directory where data formatted by the <format_inputs.R> script will be stored
 - dir .\outputs\ - Emplty directory where outputs from the model will be stored after running <EOLES-Dispatch.py>
+- <cbc.exe> - Default solver used by the EOLES-Dispatch.py script. All information about the Cbc solver is here : 
+https://projects.coin-or.org/Cbc
 
 ## Acknowledgement
 - EOLES-Dispatch was developped based on the EOLES model developped by Behrang Shirizadeh, Quentin Perrier & Philippe Quirion available on Behrang Shirizadeh's GitHub page: https://github.com/BehrangShirizadeh
