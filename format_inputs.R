@@ -20,7 +20,7 @@ setwd(dirname(getActiveDocumentContext()$path))
 # Replace dates below to use another period (period selected is including start day and excluding end day)
 start <- as.POSIXct("2019/01/01",tz="UTC")
 end <- as.POSIXct("2020/01/01",tz="UTC")
-scenario <- "ScenarioB_BASELINE" # Set the name of the excel file containing the scenario to run
+scenario <- "Scenario_FORMAT" # Set the name of the excel file containing the scenario to run
 actCF <- FALSE                    # Set to false to download Renewable Ninja projections instead of historic CFs
 rn_horizon <- "CU"                # Set the time horizon to consider for solar and wind capacity factors from renewable.ninja
 #     options : "CU"->Current ; "NT"->Near-Term ; "LT"->Long-Term
