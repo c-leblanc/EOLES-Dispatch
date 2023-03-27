@@ -6,9 +6,9 @@ EOLES-Dispatch is an cost minimization dispatch model aimed at simulating realis
 ## Steps to run the model
 1. Specify a scenario by copying and modifying the <Scenario_BASELINE.xlsx> file
 2. In the last section of <EOLES-Dispatch.py>, specify all the simulations needed with the 'run_model()' function and the following specifications:
-  - 'scenario' - Name of the .xlsx in which specifications of the scenario to simulate are gathered (created in step 1)
-  - 'year'     - Which year (among 2016-2019) should be considered for weather related and other time-varying inputs (hourly power demand, wind and solar production, ...)
-  - 'outputs'  - Name of the (existing) directory in which outputs will be saved (/!\ create the specified directory before launching the simulation)
+      - 'scenario' -- Name of the .xlsx in which specifications of the scenario to simulate are gathered (created in step 1)
+      - 'year'     -- Which year (among 2016-2019) should be considered for weather related and other time-varying inputs (hourly power demand, wind and solar production, ...)
+      - 'outputs'  -- Name of the (existing) directory in which outputs will be saved (/!\ create the specified directory before launching the simulation)
 3. Run the model by running the whole <EOLES-Dispatch.py> script
 4. Get output data from the 'outputs' directory
 
