@@ -1,4 +1,4 @@
-"""
+﻿"""
 EOLES-Dispatch Model by Clément Leblanc, January 2022
 ***
 Based the EOLES Model developped by Behrang Shirizadeh, Quentin Perrier and Philippe Quirion (May 2021)
@@ -391,9 +391,6 @@ def set_model():
     
     return(model)
 
-
-
-
 def save_model(model, outputs):
     production = pd.DataFrame(index = range(len(model.a*model.h)),columns=['area','hour','nmd','pv','river','nuclear','lake_phs','wind','coal','gas','oil','battery','phs_in','battery_in','net_imports','net_exo_imports'])
     production.area = np.repeat(list(model.a._values),len(model.h), axis=0)
@@ -461,6 +458,7 @@ def save_model(model, outputs):
         FRtrade[a] = (np.array(pyo.value(model.im['FR',a,:]))*(1-trloss) - np.array(pyo.value(model.ex['FR',a,:]))).tolist()
     FRtrade = FRtrade.set_index('hour')
     
+    if not os.path.exists(outputs): os.makedirs(outputs)
     production.to_csv(outputs+"/production.csv",index=True)
     capa_on.to_csv(outputs+"/capa_on.csv",index=True)
     capa_factors.to_csv(outputs+"/capa_factors.csv",index=True)
