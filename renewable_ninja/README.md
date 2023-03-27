@@ -5,9 +5,8 @@ Raw data was downloaded from https://www.renewables.ninja/ on the 2021-06-15. Th
 - Wind (Current fleet, onshore/offshore separated, MERRA-2)
 - Wind (Near-term future fleet, onshore/offshore separated, MERRA-2)
 - Wind (Long-term future fleet, onshore/offshore separated, MERRA-2)
-The formatting procedure applied to this data to make it usable by the EOLES-Dispatch model is detailed in the R script <renewable_ninja_format.R>
 
-The previouly mentionned formatting procedure result in:
+After formatting, these data are presented here as the following files:
 - 1 file for solar PV gathering the average CF for each hour since 1980-01-001 and for each of the seven countries modeled in EOLES-Dispatch (<pv.csv>)
 - 2 files for onshore wind gathering the average CF for each hour since 1980-01-001 and for each of the seven countries modeled in EOLES-Dispatch: one version describing the current fleet (<onshore_CU.csv>) and one version describing the near-term fleet (<onshore_NT.csv>)
 - 3 files for offshore wind gathering the average CF for each hour since 1980-01-001 and for each of the seven countries modeled in EOLES-Dispatch: one version describing the current fleet (<offshore_CU.csv>), one version describing the near-term fleet (<offshore_NT.csv>) and one version describing the long-term fleet (<offshore_LT.csv>)
