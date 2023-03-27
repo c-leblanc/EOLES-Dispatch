@@ -11,9 +11,13 @@ args = commandArgs(trailingOnly=TRUE)
 scenario <- args[1] # Set the name of the excel file containing the scenario to run
 simul_year <- as.numeric(args[2]) # Set the year to simulate
 
+if (!require('readxl')) install.packages('readxl')
 library(readxl, quietly = TRUE, warn.conflicts=FALSE)
+if (!require('dplyr')) install.packages('dplyr')
 library(dplyr, quietly = TRUE, warn.conflicts=FALSE)
+if (!require('reshape2')) install.packages('reshape2')
 library(reshape2, quietly = TRUE, warn.conflicts=FALSE)
+if (!require('lubridate')) install.packages('lubridate')
 library(lubridate, warn.conflicts=FALSE)
 
 #### BASIC PARAMETERS OF THE MODEL RUN ####
