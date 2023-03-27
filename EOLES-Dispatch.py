@@ -494,5 +494,5 @@ def run_model(scenario, year, outputs):
 ## scenario : Name of the .xlsx in which specifications of the scenario to simulate are gathered
 ## year     : Which year (among 2016-2019) should be considered for weather related and other time-varying inputs (hourly power demand, wind and solar production, ...)
 ## outputs  : Name of the (existing) directory in which outputs will be saved
-run_model(scenario="Scenario_NAME", year="2015", outputs="outputs/DIRECTORY_NAME")
+run_model(scenario="Scenario_BASELINE", year="2019", outputs="outputs/BASELINE_2019")
 
