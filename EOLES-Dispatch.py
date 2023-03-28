@@ -426,21 +426,6 @@ def save_model(model, outputs):
     capa_on.oil = pyo.value(model.on[:,'oil_light',:])
     capa_on = capa_on.set_index(['area','hour'])
     
-    np.seterr(invalid='ignore')
-    capa_factors = pd.DataFrame(index = range(len(model.a*model.h)),columns=['area','hour','nuclear','coal_SA','coal_1G','coal_LI','gas_ccgt1G','gas_ccgt2G','gas_ccgtSA','gas_ocgtSA','oil'])
-    capa_factors.area = np.repeat(list(model.a._values),len(model.h), axis=0)
-    capa_factors.hour = list(model.h._values)*len(model.a)
-    capa_factors.nuclear = np.array(pyo.value(model.gene[:,'nuclear',:]))/np.array(pyo.value(model.on[:,'nuclear',:]))
-    capa_factors.coal_SA = np.array(pyo.value(model.gene[:,'coal_SA',:]))/np.array(pyo.value(model.on[:,'coal_SA',:]))
-    capa_factors.coal_1G = np.array(pyo.value(model.gene[:,'coal_1G',:]))/np.array(pyo.value(model.on[:,'coal_1G',:]))
-    capa_factors.coal_LI = np.array(pyo.value(model.gene[:,'lignite',:]))/np.array(pyo.value(model.on[:,'lignite',:]))
-    capa_factors.gas_ccgt1G = np.array(pyo.value(model.gene[:,'gas_ccgt1G',:]))/np.array(pyo.value(model.on[:,'gas_ccgt1G',:]))
-    capa_factors.gas_ccgt2G = np.array(pyo.value(model.gene[:,'gas_ccgt2G',:]))/np.array(pyo.value(model.on[:,'gas_ccgt2G',:]))
-    capa_factors.gas_ccgtSA = np.array(pyo.value(model.gene[:,'gas_ccgtSA',:]))/np.array(pyo.value(model.on[:,'gas_ccgtSA',:]))
-    capa_factors.gas_ocgtSA = np.array(pyo.value(model.gene[:,'gas_ocgtSA',:]))/np.array(pyo.value(model.on[:,'gas_ocgtSA',:]))
-    capa_factors.oil = np.array(pyo.value(model.gene[:,'oil_light',:]))/np.array(pyo.value(model.on[:,'oil_light',:]))
-    capa_factors = capa_factors.set_index(['area','hour'])
-
     prices = pd.DataFrame(index = range(len(model.h)), columns=['hour']+list(model.a._values))
     i = 0
     for hour in model.h:
@@ -461,7 +446,6 @@ def save_model(model, outputs):
     if not os.path.exists(outputs): os.makedirs(outputs)
     production.to_csv(outputs+"/production.csv",index=True)
     capa_on.to_csv(outputs+"/capa_on.csv",index=True)
-    capa_factors.to_csv(outputs+"/capa_factors.csv",index=True)
     prices.to_csv(outputs+"/prices.csv",index=True)
     FRtrade.to_csv(outputs+"/FRtrade.csv",index=True)
 
