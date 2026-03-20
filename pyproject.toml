@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eoles-dispatch"
+version = "0.1.0"
+description = "Cost-minimization dispatch model for simulating wholesale electricity prices"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Clément Leblanc" },
+]
+dependencies = [
+    "pyomo>=6.0",
+    "highspy>=1.5",
+    "pandas>=1.3",
+    "numpy>=1.20",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+collect = [
+    "entsoe-py>=0.6",
+]
+xlsx = [
+    "openpyxl>=3.0",
+]
+viz = [
+    "plotly>=5.0",
+]
+dev = [
+    "pytest>=7.0",
+    "openpyxl>=3.0",
+    "entsoe-py>=0.6",
+    "plotly>=5.0",
+]
+
+[project.scripts]
+eoles-dispatch = "eoles_dispatch.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

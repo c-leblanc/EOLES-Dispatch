@@ -1,0 +1,13 @@
+No color -> see scenario description
+Source = ENTSOE
+Source = TYNDP (2018 + fuel prices updated on TYNDP2020)
+Source = METIS
+Source = Hyp Behrang
+Guess based on historical data
+"Handpicked plant by plant, then adjusted to fit observed price in 2019"
+""
+""
+Remarks / To solve
+"Nuclear capacity in DE and UK is the maximum production over 2015-2019, which is significantly higher than the remaining capacity in 2019. This is at the moment necessary to obtain a consistent production since nuclear availability factors are computed on this basis to ensure it remains below 1. Should be fixed, espacially if nuclear remains in projection for germany"
+""
+Notes

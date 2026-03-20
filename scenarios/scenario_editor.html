@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EOLES-Dispatch — Scenario Editor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6fa; --surface: #fff; --primary: #2563eb; --primary-light: #dbeafe;
+    --danger: #fee2e2; --danger-border: #f87171; --text: #1e293b; --muted: #64748b;
+    --border: #e2e8f0; --header-bg: #f1f5f9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  /* Header */
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  header .actions { display: flex; gap: 8px; margin-left: auto; }
+  header input[type="text"] { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; width: 180px; }
+  button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; }
+  button:hover { background: var(--header-bg); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: #1d4ed8; }
+
+  /* Tabs */
+  .tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; overflow-x: auto; }
+  .tab { padding: 10px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; color: var(--muted); font-weight: 500; }
+  .tab:hover { color: var(--text); background: var(--header-bg); }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  /* Table container */
+  .table-container { padding: 16px 24px; overflow-x: auto; }
+  .table-desc { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+
+  /* Spreadsheet table */
+  table { border-collapse: collapse; font-size: 13px; width: auto; min-width: 100%; }
+  th { background: var(--header-bg); padding: 6px 12px; text-align: left; font-weight: 600; border: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; cursor: help; }
+  td { padding: 0; border: 1px solid var(--border); min-width: 80px; position: relative; }
+  td.row-header { background: var(--header-bg); padding: 6px 12px; font-weight: 600; min-width: 100px; }
+  td input { width: 100%; padding: 6px 10px; border: none; font-size: 13px; font-family: inherit; background: transparent; outline: none; }
+  td input:focus { background: var(--primary-light); }
+  td.invalid { background: var(--danger); }
+  td.invalid input { background: var(--danger); }
+
+  /* Status bar */
+  .status { padding: 8px 24px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); background: var(--surface); position: fixed; bottom: 0; width: 100%; }
+  .status .error-count { color: var(--danger-border); font-weight: 600; }
+
+  /* Tooltip */
+  th .tooltip { display: none; position: absolute; background: var(--text); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 400; z-index: 10; white-space: nowrap; top: 100%; left: 0; margin-top: 4px; }
+  th:hover .tooltip { display: block; }
+
+  /* Hidden file input */
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EOLES-Dispatch Scenario Editor</h1>
+  <label>Scenario name: <input type="text" id="scenarioName" value="baseline" /></label>
+  <div class="actions">
+    <button onclick="document.getElementById('folderInput').click()">Load Folder (Full Scenario)</button>
+    <input type="file" id="folderInput" webkitdirectory onchange="loadFolder(event)" />
+    <button onclick="document.getElementById('fileInput').click()">Load CSVs</button>
+    <input type="file" id="fileInput" multiple accept=".csv" onchange="loadCSVs(event)" />
+    <button class="primary" onclick="exportZip()">Download ZIP</button>
+  </div>
+</header>
+
+<div class="tabs" id="tabBar"></div>
+<div class="table-container" id="tableContainer"></div>
+<div class="status" id="statusBar">Ready — edit cells directly, then export as ZIP</div>
+
+<script>
+// ─── Schema: defines all tables, their structure, and validation ───
+
+const SCHEMA = [
+  {
+    id: 'thr_specs', label: 'Thermal specs',
+    desc: 'Technical and economic parameters for each thermal technology',
+    columns: [
+      { key: 'tec', label: 'Technology', type: 'text', desc: 'Technology identifier' },
+      { key: 'fuel_price', label: 'Fuel price', type: 'number', min: 0, desc: 'EUR/net GJ' },
+      { key: 'efficiency', label: 'Efficiency', type: 'number', min: 0.01, max: 1, desc: 'NCV efficiency (0-1)' },
+      { key: 'eff50', label: 'Eff. @50%', type: 'number', min: 0.01, max: 1, desc: 'Efficiency at 50% load (0-1)' },
+      { key: 'co2_price', label: 'CO2 price', type: 'number', min: 0, desc: 'EUR/tCO2' },
+      { key: 'co2_factor', label: 'CO2 factor', type: 'number', min: 0, desc: 'kg CO2/net GJ' },
+      { key: 'nonFuel_vOM', label: 'Non-fuel vOM', type: 'number', min: 0, desc: 'EUR/MWh' },
+      { key: 'su_fuelCons', label: 'SU fuel', type: 'number', min: 0, desc: 'Start-up fuel consumption (net GJ/MW)' },
+      { key: 'su_fixedCost', label: 'SU fixed cost', type: 'number', min: 0, desc: 'Start-up fixed cost (EUR/MW)' },
+      { key: 'minTimeOFF', label: 'Min OFF', type: 'integer', min: 0, desc: 'Minimum time off (hours)' },
+      { key: 'minTimeON', label: 'Min ON', type: 'integer', min: 0, desc: 'Minimum time on (hours)' },
+      { key: 'minSG', label: 'Min stable', type: 'number', min: 0, max: 1, desc: 'Minimum stable generation (fraction)' },
+      { key: 'ramp_fuelCons', label: 'Ramp fuel', type: 'number', min: 0, desc: 'Ramp-up fuel consumption (net GJ/MW)' },
+      { key: 'frr', label: 'FRR', type: 'boolean', desc: 'Can provide frequency restoration reserve' },
+      { key: 'thr_fuel', label: 'Fuel type', type: 'text', desc: 'Fuel category (NUCLEAR, COAL, GAS, OIL, LIGNITE)' },
+    ]
+  },
+  {
+    id: 'rsv_req', label: 'Reserve req.',
+    desc: 'Additional FRR requirement per GW of installed VRE capacity',
+    columns: [
+      { key: 'tec', label: 'Technology', type: 'text' },
+      { key: 'value', label: 'FRR req. (GW/GW)', type: 'number', min: 0, max: 1 },
+    ]
+  },
+  {
+    id: 'str_vOM', label: 'Storage costs',
+    desc: 'Variable O&M costs for storage technologies',
+    columns: [
+      { key: 'tec', label: 'Technology', type: 'text' },
+      { key: 'value', label: 'vOM (EUR/MWh)', type: 'number', min: 0 },
+    ]
+  },
+  {
+    id: 'capa', label: 'Capacity (GW)', desc: 'Installed generation capacity by area and technology (GW)',
+    rowKey: 'tec', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'maxAF', label: 'Max AF', desc: 'Maximum hourly availability factor by area and technology (0-1)',
+    rowKey: 'tec', areaColumns: true, validation: { min: 0, max: 1 }
+  },
+  {
+    id: 'yEAF', label: 'Yearly AF', desc: 'Yearly equivalent availability factor (average CF cap) by area and technology (0-1)',
+    rowKey: 'tec', areaColumns: true, validation: { min: 0, max: 1 }
+  },
+  {
+    id: 'capa_in', label: 'Storage cap. (GW)', desc: 'Storage charging capacity by area and technology (GW)',
+    rowKey: 'tec', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'stockMax', label: 'Storage vol. (TWh)', desc: 'Maximum energy storage volume by area and technology (TWh)',
+    rowKey: 'tec', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'links', label: 'Interconnections', desc: 'Interconnection capacity between modeled countries (GW)',
+    rowKey: 'exporter', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'exo_IM', label: 'Exo imports', desc: 'Maximum import capacity from non-modeled countries (GW)',
+    rowKey: 'importer', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'exo_EX', label: 'Exo exports', desc: 'Maximum export capacity to non-modeled countries (GW)',
+    rowKey: 'exporter', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'fuel_timeFactor', label: 'Fuel time factor',
+    desc: 'Monthly fuel price correction factors (index, average ≈ 1)',
+    rowKey: 'month', areaColumns: true, validation: { min: 0 }
+  },
+  {
+    id: 'fuel_areaFactor', label: 'Fuel area factor',
+    desc: 'Area-specific fuel price correction factors (additive, EUR/net GJ)',
+    rowKey: 'area', areaColumns: true, validation: {}
+  },
+];
+
+// ─── State ───
+
+let data = {};       // { tableId: [ {col: val, ...}, ... ] }
+let activeTab = SCHEMA[0].id;
+
+// ─── CSV parsing/serialization ───
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim());
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = line.split(',').map(v => v.trim());
+    const row = {};
+    headers.forEach((h, i) => row[h] = vals[i] || '');
+    return row;
+  });
+}
+
+function toCSV(tableId) {
+  const rows = data[tableId];
+  if (!rows || !rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  const lines = [headers.join(',')];
+  rows.forEach(row => lines.push(headers.map(h => row[h] ?? '').join(',')));
+  return lines.join('\n') + '\n';
+}
+
+// ─── Load CSVs ───
+
+function loadCSVFiles(files, statusPrefix) {
+  const validFiles = [...files].filter(f => f.name.endsWith('.csv') && SCHEMA.find(s => s.id === f.name.replace('.csv', '')));
+  if (!validFiles.length) { updateStatus('No matching CSV files found'); return; }
+  let loaded = 0;
+  for (const file of validFiles) {
+    const name = file.name.replace('.csv', '');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      data[name] = parseCSV(e.target.result);
+      loaded++;
+      if (loaded === validFiles.length) {
+        renderTabs();
+        switchTab(activeTab);
+        updateStatus(`${statusPrefix || 'Loaded'} ${loaded} table(s)`);
+      }
+    };
+    reader.readAsText(file);
+  }
+}
+
+function loadCSVs(event) { loadCSVFiles(event.target.files, 'Loaded'); }
+function loadFolder(event) {
+  const files = event.target.files;
+  if (files.length > 0 && files[0].webkitRelativePath) {
+    const folderName = files[0].webkitRelativePath.split('/')[0];
+    document.getElementById('scenarioName').value = folderName;
+  }
+  loadCSVFiles(files, 'Loaded from folder:');
+}
+
+// ─── Drag & drop ───
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.body.addEventListener('dragover', (e) => { e.preventDefault(); document.body.style.outline = '3px dashed var(--primary)'; });
+  document.body.addEventListener('dragleave', () => { document.body.style.outline = ''; });
+  document.body.addEventListener('drop', (e) => {
+    e.preventDefault();
+    document.body.style.outline = '';
+    const items = e.dataTransfer.items;
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [];
+      let pending = 0;
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry();
+        if (entry && entry.isDirectory) {
+          pending++;
+          const reader = entry.createReader();
+          reader.readEntries((dirEntries) => {
+            for (const de of dirEntries) {
+              if (de.isFile && de.name.endsWith('.csv')) {
+                pending++;
+                de.file(f => { entries.push(f); pending--; if (pending === 0) loadCSVFiles(entries, 'Dropped:'); });
+              }
+            }
+            pending--;
+            if (pending === 0 && entries.length) loadCSVFiles(entries, 'Dropped:');
+          });
+        } else if (entry && entry.isFile && entry.name.endsWith('.csv')) {
+          pending++;
+          entry.file(f => { entries.push(f); pending--; if (pending === 0) loadCSVFiles(entries, 'Dropped:'); });
+        }
+      }
+    } else {
+      loadCSVFiles(e.dataTransfer.files, 'Dropped:');
+    }
+  });
+});
+
+// ─── Export ZIP ───
+
+async function exportZip() {
+  syncFromDOM();
+  const zip = new JSZip();
+  const name = document.getElementById('scenarioName').value || 'scenario';
+  const folder = zip.folder(name);
+  let count = 0;
+  for (const schema of SCHEMA) {
+    if (data[schema.id] && data[schema.id].length) {
+      folder.file(schema.id + '.csv', toCSV(schema.id));
+      count++;
+    }
+  }
+  if (count === 0) { updateStatus('Nothing to export — load or create a scenario first'); return; }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name + '.zip';
+  a.click();
+  updateStatus(`Exported ${count} tables as ${name}.zip`);
+}
+
+// ─── Baseline data (embedded) ───
+
+const BASELINE = {
+  thr_specs: [
+    {tec:'nuclear',fuel_price:0.47,efficiency:0.33,eff50:0.3,co2_price:24.75,co2_factor:0,nonFuel_vOM:15.0,su_fuelCons:14.0,su_fixedCost:21.0,minTimeOFF:12,minTimeON:12,minSG:0.7,ramp_fuelCons:0.5,frr:'True',thr_fuel:'NUCLEAR'},
+    {tec:'coal_1G',fuel_price:2.0,efficiency:0.35,eff50:0.3,co2_price:24.75,co2_factor:94,nonFuel_vOM:3.3,su_fuelCons:18.0,su_fixedCost:69.69,minTimeOFF:8,minTimeON:8,minSG:0.43,ramp_fuelCons:0.35,frr:'False',thr_fuel:'COAL'},
+    {tec:'coal_SA',fuel_price:2.0,efficiency:0.46,eff50:0.41,co2_price:24.75,co2_factor:94,nonFuel_vOM:3.3,su_fuelCons:18.0,su_fixedCost:42.29,minTimeOFF:8,minTimeON:8,minSG:0.43,ramp_fuelCons:0.35,frr:'False',thr_fuel:'COAL'},
+    {tec:'lignite',fuel_price:1.0,efficiency:0.38,eff50:0.34,co2_price:24.75,co2_factor:101,nonFuel_vOM:3.3,su_fuelCons:18.0,su_fixedCost:50.12,minTimeOFF:11,minTimeON:11,minSG:0.43,ramp_fuelCons:0.45,frr:'False',thr_fuel:'LIGNITE'},
+    {tec:'gas_ccgt1G',fuel_price:5.6,efficiency:0.4,eff50:0.36,co2_price:24.75,co2_factor:57,nonFuel_vOM:1.6,su_fuelCons:7.6,su_fixedCost:72.83,minTimeOFF:3,minTimeON:3,minSG:0.35,ramp_fuelCons:0.11,frr:'False',thr_fuel:'GAS'},
+    {tec:'gas_ccgt2G',fuel_price:5.6,efficiency:0.48,eff50:0.44,co2_price:24.75,co2_factor:57,nonFuel_vOM:1.6,su_fuelCons:7.6,su_fixedCost:43.07,minTimeOFF:3,minTimeON:3,minSG:0.35,ramp_fuelCons:0.11,frr:'False',thr_fuel:'GAS'},
+    {tec:'gas_ccgtSA',fuel_price:5.6,efficiency:0.56,eff50:0.5,co2_price:24.75,co2_factor:57,nonFuel_vOM:1.6,su_fuelCons:7.6,su_fixedCost:25.06,minTimeOFF:2,minTimeON:2,minSG:0.35,ramp_fuelCons:0.07,frr:'False',thr_fuel:'GAS'},
+    {tec:'gas_ocgtSA',fuel_price:5.6,efficiency:0.42,eff50:0.4,co2_price:24.75,co2_factor:57,nonFuel_vOM:1.6,su_fuelCons:0.2,su_fixedCost:20.36,minTimeOFF:1,minTimeON:1,minSG:0.3,ramp_fuelCons:0.09,frr:'True',thr_fuel:'GAS'},
+    {tec:'oil_light',fuel_price:12.9,efficiency:0.35,eff50:0.34,co2_price:24.75,co2_factor:78,nonFuel_vOM:1.1,su_fuelCons:0.21,su_fixedCost:36.0,minTimeOFF:1,minTimeON:1,minSG:0.35,ramp_fuelCons:0.1,frr:'False',thr_fuel:'OIL'},
+  ],
+  rsv_req: [
+    {tec:'offshore',value:0.05}, {tec:'onshore',value:0.05}, {tec:'pv',value:0.03}, {tec:'river',value:0},
+  ],
+  str_vOM: [
+    {tec:'lake_phs',value:0}, {tec:'battery',value:0},
+  ],
+  capa: [
+    {tec:'offshore',FR:0,BE:1.548,DE:9.629,CH:0,IT:0,ES:0,UK:6.09},
+    {tec:'onshore',FR:14.551,BE:1.8,DE:55.973,CH:0.045,IT:11.15,ES:21.545,UK:10.47},
+    {tec:'pv',FR:9.158,BE:3.175,DE:37.91,CH:0.313,IT:17.094,ES:9.52,UK:11.873},
+    {tec:'river',FR:9.751,BE:0.175,DE:4.021,CH:0.635,IT:10.441,ES:2.0,UK:1.885},
+    {tec:'nuclear',FR:63.13,BE:5.99,DE:9.524,CH:3.392,IT:0,ES:7.122,UK:9.006},
+    {tec:'coal_1G',FR:2.997,BE:0.47,DE:8.0,CH:0,IT:3.0,ES:8.183,UK:7.56},
+    {tec:'coal_SA',FR:0,BE:0,DE:15.0,CH:0,IT:1.851,ES:1.5,UK:0},
+    {tec:'lignite',FR:0,BE:0,DE:21.205,CH:0,IT:0,ES:0,UK:0},
+    {tec:'gas_ccgt1G',FR:3.161,BE:0.76,DE:3.0,CH:0,IT:21.0,ES:9.0,UK:5.906},
+    {tec:'gas_ccgt2G',FR:3.5,BE:1.2,DE:3.0,CH:0,IT:9.0,ES:10.0,UK:11.645},
+    {tec:'gas_ccgtSA',FR:4.5,BE:3.0,DE:11.0,CH:0,IT:10.555,ES:7.25,UK:13.917},
+    {tec:'gas_ocgtSA',FR:1.03,BE:1.686,DE:7.285,CH:0,IT:5.766,ES:1.632,UK:3.115},
+    {tec:'oil_light',FR:3.401,BE:0.333,DE:4.356,CH:0,IT:1.493,ES:0.769,UK:1.21},
+    {tec:'lake_phs',FR:14.0,BE:1.0,DE:10.72,CH:12.06,IT:11.431,ES:24.791,UK:2.815},
+    {tec:'battery',FR:0,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0},
+  ],
+  links: [
+    {exporter:'FR',FR:0,BE:1.1,DE:3.5,CH:1.7,IT:1.8,ES:1.8,UK:1.6},
+    {exporter:'BE',FR:0.9,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0.7},
+    {exporter:'DE',FR:0.4,BE:0,DE:0,CH:2.8,IT:0,ES:0,UK:0},
+    {exporter:'CH',FR:1.7,BE:0,DE:2.0,CH:0,IT:2.4,ES:0,UK:0},
+    {exporter:'IT',FR:0.2,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0},
+    {exporter:'ES',FR:1.9,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0},
+    {exporter:'UK',FR:1.3,BE:0.2,DE:0,CH:0,IT:0,ES:0,UK:0},
+  ],
+  exo_IM: [
+    {importer:'FR',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {importer:'BE',NL:1.9,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {importer:'DE',NL:3.1,DK1:0.5,DK2:0.5,SE4:0.5,PL:0,CZ:0.7,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {importer:'CH',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0.8,GR:0,SI:0,PT:0,IE:0},
+    {importer:'IT',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0.1,GR:0,SI:0.8,PT:0,IE:0},
+    {importer:'ES',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:3,IE:0},
+    {importer:'UK',NL:1.0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0.6},
+  ],
+  exo_EX: [
+    {exporter:'FR',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {exporter:'BE',NL:0.7,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {exporter:'DE',NL:1.8,DK1:1.2,DK2:0.6,SE4:0.2,PL:1.2,CZ:1.3,AT:2.5,GR:0,SI:0,PT:0,IE:0},
+    {exporter:'CH',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0},
+    {exporter:'IT',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0.4,SI:0,PT:0,IE:0},
+    {exporter:'ES',NL:0,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:2,IE:0},
+    {exporter:'UK',NL:0.5,DK1:0,DK2:0,SE4:0,PL:0,CZ:0,AT:0,GR:0,SI:0,PT:0,IE:0.9},
+  ],
+  maxAF: [
+    {tec:'nuclear',FR:1.0,BE:1.0,DE:1.0,CH:1.0,IT:1.0,ES:1.0,UK:1.0},
+    {tec:'coal_1G',FR:0.6,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.65,UK:0.95},
+    {tec:'coal_SA',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'lignite',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'gas_ccgt1G',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'gas_ccgt2G',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'gas_ccgtSA',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'gas_ocgtSA',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+    {tec:'oil_light',FR:0.95,BE:0.95,DE:0.95,CH:0.95,IT:0.95,ES:0.95,UK:0.95},
+  ],
+  yEAF: [
+    {tec:'nuclear',FR:1.0,BE:1.0,DE:1.0,CH:1.0,IT:1.0,ES:1.0,UK:1.0},
+    {tec:'coal_1G',FR:0.06,BE:0.05,DE:0.7,CH:0.93,IT:0.93,ES:0.15,UK:0.93},
+    {tec:'coal_SA',FR:0.06,BE:0.05,DE:0.7,CH:0.93,IT:0.93,ES:0.15,UK:0.93},
+    {tec:'lignite',FR:0.93,BE:0.93,DE:0.7,CH:0.93,IT:0.93,ES:0.93,UK:0.93},
+    {tec:'gas_ccgt1G',FR:0.93,BE:0.93,DE:0.93,CH:0.93,IT:0.93,ES:0.93,UK:0.93},
+    {tec:'gas_ccgt2G',FR:0.93,BE:0.93,DE:0.93,CH:0.93,IT:0.93,ES:0.93,UK:0.93},
+    {tec:'gas_ccgtSA',FR:0.93,BE:0.93,DE:0.93,CH:0.93,IT:0.93,ES:0.93,UK:0.93},
+    {tec:'gas_ocgtSA',FR:0.96,BE:0.96,DE:0.96,CH:0.96,IT:0.96,ES:0.96,UK:0.96},
+    {tec:'oil_light',FR:0.93,BE:0.93,DE:0.93,CH:0.93,IT:0.93,ES:0.93,UK:0.93},
+  ],
+  capa_in: [
+    {tec:'lake_phs',FR:7.772,BE:1,DE:10.236,CH:0,IT:5.515,ES:5.645,UK:0},
+    {tec:'battery',FR:0,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0},
+  ],
+  stockMax: [
+    {tec:'lake_phs',FR:3.1,BE:0.005,DE:0.65,CH:6.6,IT:4.5,ES:13.7,UK:3},
+    {tec:'battery',FR:0,BE:0,DE:0,CH:0,IT:0,ES:0,UK:0},
+  ],
+  fuel_areaFactor: [
+    {area:'FR',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0,OIL:0},
+    {area:'BE',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:-0.5,OIL:0},
+    {area:'DE',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0,OIL:0},
+    {area:'CH',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0,OIL:0},
+    {area:'IT',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:1.2,OIL:0},
+    {area:'ES',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0.65,OIL:0},
+    {area:'UK',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0,OIL:0},
+  ],
+};
+
+// Note: fuel_timeFactor has 60 rows (monthly 2015-2019), too large to embed.
+// It will show empty until CSVs are loaded. Load from baseline/ folder to populate.
+
+// ─── Initialize with baseline ───
+
+function initBaseline() {
+  for (const schema of SCHEMA) {
+    if (BASELINE[schema.id]) {
+      data[schema.id] = JSON.parse(JSON.stringify(BASELINE[schema.id]));
+    } else {
+      data[schema.id] = [];
+    }
+  }
+}
+
+// ─── Rendering ───
+
+function renderTabs() {
+  const bar = document.getElementById('tabBar');
+  bar.innerHTML = '';
+  for (const schema of SCHEMA) {
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (schema.id === activeTab ? ' active' : '');
+    tab.textContent = schema.label;
+    tab.onclick = () => switchTab(schema.id);
+    bar.appendChild(tab);
+  }
+}
+
+function switchTab(id) {
+  syncFromDOM();
+  activeTab = id;
+  renderTabs();
+  renderTable(id);
+}
+
+function renderTable(tableId) {
+  const container = document.getElementById('tableContainer');
+  const schema = SCHEMA.find(s => s.id === tableId);
+  const rows = data[tableId] || [];
+
+  if (!rows.length) {
+    container.innerHTML = `<div class="table-desc">${schema.desc}</div><p style="color:var(--muted);padding:20px 0;">No data loaded for this table. Load CSVs or use baseline values.</p>`;
+    return;
+  }
+
+  let html = `<div class="table-desc">${schema.desc}</div><table id="activeTable" data-id="${tableId}">`;
+
+  if (schema.columns) {
+    // Explicit column schema (thr_specs, rsv_req, str_vOM)
+    html += '<tr>';
+    for (const col of schema.columns) {
+      html += `<th>${col.label}<span class="tooltip">${col.desc || col.key}${col.min !== undefined ? ` [min: ${col.min}]` : ''}${col.max !== undefined ? ` [max: ${col.max}]` : ''}</span></th>`;
+    }
+    html += '</tr>';
+    rows.forEach((row, ri) => {
+      html += '<tr>';
+      for (const col of schema.columns) {
+        const val = row[col.key] ?? '';
+        if (col.key === schema.columns[0].key) {
+          html += `<td class="row-header">${val}</td>`;
+        } else {
+          const cls = validateCell(col, val) ? '' : ' invalid';
+          html += `<td class="${cls}"><input type="text" value="${val}" data-row="${ri}" data-col="${col.key}" oninput="onCellEdit(this)" /></td>`;
+        }
+      }
+      html += '</tr>';
+    });
+  } else {
+    // Area-column tables (capa, maxAF, links, etc.)
+    const headers = Object.keys(rows[0]);
+    const rowKey = headers[0];
+    const areaCols = headers.slice(1);
+    const v = schema.validation || {};
+    html += `<tr><th>${rowKey}</th>`;
+    for (const ac of areaCols) {
+      html += `<th>${ac}<span class="tooltip">${schema.desc}</span></th>`;
+    }
+    html += '</tr>';
+    rows.forEach((row, ri) => {
+      html += `<tr><td class="row-header">${row[rowKey]}</td>`;
+      for (const ac of areaCols) {
+        const val = row[ac] ?? '';
+        const cls = validateValue(v, val) ? '' : ' invalid';
+        html += `<td class="${cls}"><input type="text" value="${val}" data-row="${ri}" data-col="${ac}" oninput="onCellEdit(this)" /></td>`;
+      }
+      html += '</tr>';
+    });
+  }
+
+  html += '</table>';
+  container.innerHTML = html;
+  updateErrorCount();
+}
+
+// ─── Validation ───
+
+function validateCell(colSchema, val) {
+  if (colSchema.type === 'text' || colSchema.type === 'boolean') return true;
+  const num = Number(val);
+  if (isNaN(num)) return false;
+  if (colSchema.min !== undefined && num < colSchema.min) return false;
+  if (colSchema.max !== undefined && num > colSchema.max) return false;
+  return true;
+}
+
+function validateValue(validation, val) {
+  if (val === '' || val === undefined) return true;
+  const num = Number(val);
+  if (isNaN(num)) return false;
+  if (validation.min !== undefined && num < validation.min) return false;
+  if (validation.max !== undefined && num > validation.max) return false;
+  return true;
+}
+
+function onCellEdit(input) {
+  const td = input.parentElement;
+  const schema = SCHEMA.find(s => s.id === activeTab);
+  const ri = parseInt(input.dataset.row);
+  const col = input.dataset.col;
+
+  // Update data
+  if (data[activeTab] && data[activeTab][ri]) {
+    data[activeTab][ri][col] = input.value;
+  }
+
+  // Validate
+  let valid;
+  if (schema.columns) {
+    const colSchema = schema.columns.find(c => c.key === col);
+    valid = colSchema ? validateCell(colSchema, input.value) : true;
+  } else {
+    valid = validateValue(schema.validation || {}, input.value);
+  }
+  td.className = valid ? '' : 'invalid';
+  updateErrorCount();
+}
+
+function updateErrorCount() {
+  const count = document.querySelectorAll('td.invalid').length;
+  const status = document.getElementById('statusBar');
+  if (count > 0) {
+    status.innerHTML = `<span class="error-count">${count} invalid cell(s)</span> — fix highlighted values before exporting`;
+  } else {
+    status.textContent = 'All values valid — edit cells directly, then export as ZIP';
+  }
+}
+
+// ─── Sync DOM inputs back to data ───
+
+function syncFromDOM() {
+  const table = document.getElementById('activeTable');
+  if (!table) return;
+  const tableId = table.dataset.id;
+  const inputs = table.querySelectorAll('input[data-row]');
+  inputs.forEach(input => {
+    const ri = parseInt(input.dataset.row);
+    const col = input.dataset.col;
+    if (data[tableId] && data[tableId][ri]) {
+      data[tableId][ri][col] = input.value;
+    }
+  });
+}
+
+// ─── Keyboard navigation ───
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName !== 'INPUT') return;
+  const td = e.target.parentElement;
+  const tr = td.parentElement;
+  const table = tr.parentElement;
+  const cells = [...tr.querySelectorAll('td input')];
+  const colIdx = cells.indexOf(e.target);
+  const rows = [...table.querySelectorAll('tr')];
+  const rowIdx = rows.indexOf(tr);
+
+  let targetInput = null;
+
+  if (e.key === 'Tab' && !e.shiftKey) {
+    e.preventDefault();
+    if (colIdx < cells.length - 1) targetInput = cells[colIdx + 1];
+    else if (rowIdx < rows.length - 1) targetInput = rows[rowIdx + 1]?.querySelector('td input');
+  } else if (e.key === 'Tab' && e.shiftKey) {
+    e.preventDefault();
+    if (colIdx > 0) targetInput = cells[colIdx - 1];
+    else if (rowIdx > 1) { const prevCells = [...rows[rowIdx - 1].querySelectorAll('td input')]; targetInput = prevCells[prevCells.length - 1]; }
+  } else if (e.key === 'ArrowDown') {
+    if (rowIdx < rows.length - 1) { const nextCells = [...rows[rowIdx + 1].querySelectorAll('td input')]; targetInput = nextCells[colIdx]; }
+  } else if (e.key === 'ArrowUp') {
+    if (rowIdx > 1) { const prevCells = [...rows[rowIdx - 1].querySelectorAll('td input')]; targetInput = prevCells[colIdx]; }
+  } else if (e.key === 'Enter') {
+    if (rowIdx < rows.length - 1) { const nextCells = [...rows[rowIdx + 1].querySelectorAll('td input')]; targetInput = nextCells[colIdx]; }
+  }
+
+  if (targetInput) { targetInput.focus(); targetInput.select(); }
+});
+
+// ─── Init ───
+
+initBaseline();
+renderTabs();
+renderTable(activeTab);
+</script>
+</body>
+</html>

@@ -1,29 +1,247 @@
-# EOLES-Dispatch Model
+# EOLES-Dispatch
 
-## Description
-EOLES-Dispatch is an cost minimization dispatch model aimed at simulating realistic wholesale electricity prices at an hourly time-step for the French power system. It takes as input a detailed description of the installed generation capacity and time series of determinants of the power dispatch such as hourly demand, renewables availability, hydro resources, nuclear maintenance planning or fossil fuel price variations.
+A cost-minimization dispatch model for simulating realistic wholesale electricity prices at an hourly time-step, with a focus on the French power system.
 
-## Steps to run the model
-1. Specify a scenario by copying and modifying the <Scenario_BASELINE.xlsx> file
-2. In the last section of <EOLES-Dispatch.py>, specify all the simulations needed with the 'run_model()' function and the following specifications:
-      - 'scenario' -- Name of the .xlsx in which specifications of the scenario to simulate are gathered (created in step 1)
-      - 'year'     -- Which year (among 2016-2019) should be considered for weather related and other time-varying inputs (hourly power demand, wind and solar production, ...)
-      - 'outputs'  -- Name of the directory in which outputs will be saved
-3. Run the model by running the whole <EOLES-Dispatch.py> script
-4. Get output data from the 'outputs' directory
+## Overview
 
-## Contents
-- <EOLES-Dispatch.py> - Python script running the EOLES-Dispatch optimization model
-- <format_inputs.R> - R script selecting and formatting data to make it usable by the EOLES-Dispatch.py script
-- <Scenario_FORMAT.xlsx> - Excel file containing all static scenario inputs and technical parameters (installed capacity per country, fuel costs, interconnection capacity etc.)
-- dir .\time-varying_inputs\ - Complete set of raw historic data (years 2015-2019) to be selected from by the formatting script; Source: https://transparency.entsoe.eu/
-- dir .\renewable_ninja\ - Capacity factors for wind and solar in each country; Source: https://renewables.ninja
-- dir .\inputs\ - Empty directory where data formatted by the <format_inputs.R> script will be stored
-- dir .\outputs\ - Emplty directory where outputs from the model will be stored after running <EOLES-Dispatch.py>
-- <cbc.exe> - Default solver used by the EOLES-Dispatch.py script. All information about the Cbc solver is here : 
-https://projects.coin-or.org/Cbc
+EOLES-Dispatch is a **linear relaxation of a unit commitment model** that strikes a balance between price realism and computational tractability. It takes as input a detailed description of installed generation capacity and time series of power dispatch determinants (hourly demand, renewable availability, hydro resources, nuclear maintenance planning, fossil fuel prices) and minimizes total dispatch cost subject to physical and operational constraints.
 
-## Acknowledgement
-- EOLES-Dispatch was developped based on the EOLES model developped by Behrang Shirizadeh, Quentin Perrier & Philippe Quirion available on Behrang Shirizadeh's GitHub page: https://github.com/BehrangShirizadeh
-- This model's script is based on the python version of the EOLES model which was written by Nilam De Oliveira-Gill and available at https://gitlab.in2p3.fr/nilam.de_oliveira-gill/eoles
-- Renewable generation data is taken from the model developped by Iain Staffel and Stefan Pfenninger and made freely available at https://www.renewables.ninja/
+The model is **centered on France**: six neighboring countries (Belgium, Germany, Switzerland, Italy, Spain, UK) are modeled explicitly to capture cross-border trade dynamics, while 11 additional neighbors are represented as exogenous price zones. This multi-country setup ensures that French wholesale prices reflect realistic import/export patterns rather than assuming an isolated system.
+
+**Key features:**
+- France-focused, with 6 coupled neighbors and 11 exogenous price zones
+- Hourly resolution, up to a full year (8760 hours)
+- LP relaxation of unit commitment: captures startup costs, min stable generation, and ramping without integer variables
+- Two model variants: **Standard** (full thermal dynamics) and **Static Thermal** (simplified, faster)
+- HiGHS solver by default (open-source, no license required)
+- Integrated data collection from ENTSO-E and Renewables.ninja
+- Interactive HTML visualization of inputs and outputs (Plotly)
+- Scenario editor in the browser
+
+## Quick start
+
+```bash
+# 1. Clone and install
+git clone https://github.com/ClementLeBlanc/EOLES-Dispatch.git
+cd EOLES-Dispatch
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[collect,viz]"
+
+# 2. Create a run (downloads data automatically on first use)
+eoles-dispatch create my_run --scenario baseline --year 2019
+
+# 3. Solve it
+eoles-dispatch solve my_run
+
+# 4. Visualize results
+eoles-dispatch viz my_run
+```
+
+## Installation
+
+**Requirements:** Python >= 3.9
+
+```bash
+pip install -e .            # Core (model + HiGHS solver)
+pip install -e ".[collect]" # + ENTSO-E data collection
+pip install -e ".[viz]"     # + Plotly visualization
+pip install -e ".[dev]"     # Everything + dev tools
+```
+
+The default solver is [HiGHS](https://highs.dev/) (bundled via `highspy`). Other solvers (Gurobi, CBC, GLPK) are supported via `--solver`.
+
+## Usage
+
+EOLES-Dispatch follows a **create → solve → visualize** workflow. Each run is a self-contained directory under `runs/`.
+
+### Creating a run
+
+```bash
+eoles-dispatch create <name> --scenario <scenario> --year <year> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--scenario baseline` | Scenario name (looks for `scenarios/<name>/` directory) |
+| `--year 2019` | Simulation year (data must cover this year) |
+| `--months 1` | Restrict to a single month (e.g. January) for fast testing |
+| `--months 6-8` | Restrict to a range of months (e.g. June to August) |
+| `--rn-horizon CU\|NT\|LT` | Renewables.ninja fleet horizon: Current, Near-Term, Long-Term (default: CU) |
+| `--actual-cf` | Use historical capacity factors instead of Renewables.ninja |
+| `--no-download` | Don't auto-download missing data |
+
+The `--months` option is useful for fast testing: 1 month solves in ~4 minutes on a laptop, vs 30+ minutes for a full year.
+
+### Solving a run
+
+```bash
+eoles-dispatch solve <name> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--solver highs` | LP solver (default: highs). Also: gurobi, cbc, glpk |
+| `--model-version standard` | Model variant: `standard` (full thermal dynamics) or `static_thermal` |
+| `--reports prices production` | Output reports to generate (also: `capa_on`, `FRtrade`) |
+
+### Visualizing results
+
+```bash
+eoles-dispatch viz <name>           # opens interactive HTML in browser
+eoles-dispatch viz run1 run2        # generate reports for multiple runs
+eoles-dispatch viz <name> --no-open # generate without opening browser
+```
+
+The report is a self-contained HTML file at `runs/<name>/viz.html` with four tabs:
+- **France — Inputs**: demand, VRE profiles, nuclear availability, capacity mix, etc.
+- **France — Outputs**: spot price statistics, price duration curve, production mix
+- **Other countries — Inputs/Outputs**: same charts for the 6 other countries
+
+### Other commands
+
+```bash
+# List all runs and their status
+eoles-dispatch list
+
+# Download data from ENTSO-E and Renewables.ninja
+eoles-dispatch collect --start 2020 --end 2025
+
+# Download only from one source
+eoles-dispatch collect --start 2020 --end 2025 --source entsoe
+eoles-dispatch collect --start 2020 --end 2025 --source ninja
+
+# Convert an old Excel scenario to CSV directory
+eoles-dispatch convert-scenario scenarios/Scenario_BASELINE.xlsx
+```
+
+## Project structure
+
+```
+EOLES-Dispatch/
+├── pyproject.toml                  # Package config & dependencies
+├── src/eoles_dispatch/
+│   ├── __main__.py                 # CLI entry point
+│   ├── config.py                   # Model constants & default parameters
+│   ├── run.py                      # Run lifecycle (create, solve, list)
+│   ├── collect.py                  # ENTSO-E & Renewables.ninja data collection
+│   ├── viz.py                      # Interactive HTML report generation
+│   ├── format_inputs.py            # Data loading & preprocessing
+│   ├── format_outputs.py           # Result extraction & export
+│   └── models/
+│       ├── default.py              # Standard model (startup, ramping, part-load)
+│       └── static_thermal.py       # Simplified model (no thermal dynamics)
+├── scenarios/
+│   ├── baseline/                   # Default scenario (13 CSV files)
+│   └── scenario_editor.html        # Browser-based scenario editor
+├── data/                           # Historical data (gitignored, regenerable)
+│   ├── time_varying_inputs/        # Demand, prices, hydro, nuclear (ENTSO-E)
+│   └── renewable_ninja/            # Wind & solar capacity factors
+└── runs/                           # Run directories (gitignored)
+    └── <run_name>/
+        ├── run.yaml                # Metadata (scenario, year, status, timestamps)
+        ├── inputs/                 # Formatted model inputs
+        ├── outputs/                # Model results (prices, production, ...)
+        ├── scenario/               # Copy of the scenario used
+        └── viz.html                # Interactive report
+```
+
+## Scenarios
+
+A scenario is a directory of 13 CSV files describing the power system configuration:
+
+| File | Description |
+|------|-------------|
+| `thr_specs.csv` | Thermal technology specs (fuel type, efficiency, variable costs, min stable generation, ramp rates, startup costs) |
+| `capa.csv` | Installed capacity by area and technology (GW) |
+| `links.csv` | Interconnection capacity between modeled countries (GW) |
+| `exo_IM.csv` / `exo_EX.csv` | Import/export capacity with exogenous neighbors (GW) |
+| `rsv_req.csv` | Reserve requirements by VRE technology |
+| `str_vOM.csv` | Storage variable O&M costs |
+| `maxAF.csv` | Maximum hourly availability factors by technology |
+| `yEAF.csv` | Yearly energy availability factors |
+| `capa_in.csv` | Storage charging capacity (GW) |
+| `stockMax.csv` | Storage reservoir volume (GWh) |
+| `fuel_timeFactor.csv` | Monthly fuel price correction factors |
+| `fuel_areaFactor.csv` | Country-specific fuel price correction factors |
+
+### Editing scenarios
+
+Open `scenarios/scenario_editor.html` in a browser for a tabbed spreadsheet-like interface. You can:
+- Load an existing scenario folder or individual CSVs
+- Edit values directly in the browser
+- Download the modified scenario as a ZIP (Unzip before using for simulation)
+
+Excel scenarios (`.xlsx`) are also supported as fallback — convert them with `eoles-dispatch convert-scenario`.
+
+## Data
+
+Historical data is **not included in the repository** (too large) but is downloaded automatically on first run creation, or manually via:
+
+```bash
+eoles-dispatch collect --start 2019 --end 2020
+```
+
+### Sources
+
+| Source | Data | API |
+|--------|------|-----|
+| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) | Demand, day-ahead prices, hydro inflows, nuclear availability | via [`entsoe-py`](https://github.com/EnergieID/entsoe-py) (requires API key in `ENTSOE_API_KEY` env variable) |
+| [Renewables.ninja](https://www.renewables.ninja/) | Wind (onshore/offshore) and solar PV capacity factors | Public country-level downloads (no API key) |
+
+### Country zone mapping
+
+| Model area | ENTSO-E bidding zone | Renewables.ninja | Notes |
+|------------|---------------------|-------------------|-------|
+| FR | FR | FR | |
+| BE | BE | BE | |
+| DE | DE_LU | DE + LU (weighted) | Germany-Luxembourg bidding zone |
+| CH | CH | CH | |
+| IT | IT (load), IT_NORD (prices) | IT | Whole country for volumes, North for prices |
+| ES | ES | ES | |
+| UK | GB | GB | Great Britain (excl. Northern Ireland) |
+
+## Model description
+
+EOLES-Dispatch is a linear programming model that minimizes total system dispatch cost over all hours and areas, subject to:
+
+- **Adequacy**: supply meets demand + reserves in every hour and area
+- **Thermal constraints** (standard model): minimum stable generation, startup/shutdown, ramp rates
+- **VRE curtailment**: renewable generation bounded by capacity × availability factor
+- **Storage**: energy balance, charge/discharge limits, reservoir capacity
+- **Hydro**: monthly inflow limits, max turbining/pumping rates
+- **Nuclear**: weekly availability factor caps
+- **Trade**: bilateral flows bounded by interconnection capacity, with 2% transmission losses
+
+The dual variable of the adequacy constraint gives the **marginal price** in each area and hour (EUR/MWh).
+
+### Key parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `VOLL` | 15,000 EUR/MWh | Value of lost load (demand shedding penalty) |
+| `LOAD_UNCERTAINTY` | 1% | Hourly demand reserve margin |
+| `TRLOSS` | 2% | Transmission losses on cross-border flows |
+| `ETA_IN` | 95% / 90% | Charging efficiency (PHS / battery) |
+| `ETA_OUT` | 90% / 95% | Discharging efficiency (PHS / battery) |
+
+## Performance notes
+
+Solve times depend heavily on the time horizon and available RAM:
+
+| Horizon | Variables (approx.) | Solve time (MacBook Air M2, 8GB) |
+|---------|-------------------|----------------------------------|
+| 1 month (744h) | ~600K | ~5 min |
+| 3 months (2160h) | ~1.8M | ~45 min |
+| Full year (8760h) | ~7M | ? h |
+
+## Acknowledgements
+
+- Based on the [EOLES family of models](https://www.centre-cired.fr/the-eoles-family-of-models/) by Behrang Shirizadeh, Quentin Perrier & Philippe Quirion (CIRED)
+- Python implementation originally by Nilam De Oliveira-Gill
+- Renewable generation data by Iain Staffell and Stefan Pfenninger ([Renewables.ninja](https://www.renewables.ninja/))
+- Power system data from [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)
+
+## License
+
+MIT

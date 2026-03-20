@@ -1,0 +1,38 @@
+# Drafts - work in progress, not part of the repo
+_drafts/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Solver binaries
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated run data (inputs/outputs are regenerable)
+runs/
+
+# Historical data (large, regenerable via `eoles-dispatch collect`)
+data/
+
+# Claude Code project memory
+.claude/
+
+# Scenarios: only track baseline, editor and Excel template
+scenarios/*
+!scenarios/baseline/
+!scenarios/scenario_editor.html
+!scenarios/Scenario_BASELINE.xlsx
+
+# Legacy directories (kept locally for reference, not tracked)
+time-varying_inputs/
+renewable_ninja/
