@@ -22,7 +22,7 @@ The model is **centered on France**: six neighboring countries (Belgium, Germany
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/ClementLeBlanc/EOLES-Dispatch.git
+git clone https://github.com/c-leblanc/EOLES-Dispatch.git
 cd EOLES-Dispatch
 python -m venv .venv
 source .venv/bin/activate
