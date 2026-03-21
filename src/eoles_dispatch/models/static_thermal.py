@@ -90,6 +90,8 @@ def build_model(run_dir):
     model.sto = pyo.Set(initialize=pd.read_csv(input_dir / "str_tec.csv", header=None).squeeze(axis=1).array, ordered=False)
     model.frr = pyo.Set(initialize=pd.read_csv(input_dir / "frr.csv", header=None).squeeze(axis=1).array, ordered=False)
     model.no_frr = pyo.Set(initialize=pd.read_csv(input_dir / "no_frr.csv", header=None).squeeze(axis=1).array, ordered=False)
+    # Trade pairs: all (a1, a2) where a1 != a2
+    model.trade_pairs = pyo.Set(initialize=[(a1, a2) for a1 in model.a for a2 in model.a if a1 != a2], dimen=2)
 
     # ── Variables (no on/startup/turnoff/ramp_up) ──────────────────────
 
@@ -98,8 +100,8 @@ def build_model(run_dir):
     model.stored = pyo.Var(((a, sto, h) for a in model.a for sto in model.sto for h in model.h), within=pyo.NonNegativeReals, initialize=0)
     model.rsv = pyo.Var(((a, tec, h) for a in model.a for tec in model.tec for h in model.h), within=pyo.NonNegativeReals, initialize=0)
     model.hll = pyo.Var(((a, h) for a in model.a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
-    model.im = pyo.Var(((a1, a2, h) for a1 in model.a for a2 in model.a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
-    model.ex = pyo.Var(((a1, a2, h) for a1 in model.a for a2 in model.a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
+    model.im = pyo.Var(((a1, a2, h) for a1, a2 in model.trade_pairs for h in model.h), within=pyo.NonNegativeReals, initialize=0)
+    model.ex = pyo.Var(((a1, a2, h) for a1, a2 in model.trade_pairs for h in model.h), within=pyo.NonNegativeReals, initialize=0)
     model.exo_im = pyo.Var(((a, exo_a, h) for a in model.a for exo_a in model.exo_a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
     model.exo_ex = pyo.Var(((a, exo_a, h) for a in model.a for exo_a in model.exo_a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
     model.hcost = pyo.Var(((a, h) for a in model.a for h in model.h), within=pyo.NonNegativeReals, initialize=0)
@@ -184,11 +186,11 @@ def build_model(run_dir):
     # Trade
     def trade_bal_rule(model, a1, a2, h):
         return model.im[a1, a2, h] == model.ex[a2, a1, h] * (1 - TRLOSS)
-    model.trade_bal_constraint = pyo.Constraint(model.a, model.a, model.h, rule=trade_bal_rule)
+    model.trade_bal_constraint = pyo.Constraint(model.trade_pairs, model.h, rule=trade_bal_rule)
 
     def icIM_rule(model, a1, a2, h):
         return model.im[a1, a2, h] <= links[a1, a2]
-    model.icIM_constraint = pyo.Constraint(model.a, model.a, model.h, rule=icIM_rule)
+    model.icIM_constraint = pyo.Constraint(model.trade_pairs, model.h, rule=icIM_rule)
 
     def exoIM_rule(model, a, exo_a, h):
         return model.exo_im[a, exo_a, h] <= exo_IM[a, exo_a]
@@ -202,11 +204,11 @@ def build_model(run_dir):
     def adequacy_rule(model, a, h):
         return (
             sum(model.gene[a, tec, h] for tec in model.tec)
-            + sum(model.im[a, trader, h] for trader in model.a)
+            + sum(model.im[a, trader, h] for trader in model.a if trader != a)
             + sum(model.exo_im[a, exo_a, h] for exo_a in model.exo_a)
         ) == (
             demand[a, h]
-            + sum(model.ex[a, trader, h] for trader in model.a)
+            + sum(model.ex[a, trader, h] for trader in model.a if trader != a)
             + sum(model.exo_ex[a, exo_a, h] for exo_a in model.exo_a)
             + sum(model.storage[a, sto, h] for sto in model.sto)
             - model.hll[a, h]
@@ -229,7 +231,7 @@ def build_model(run_dir):
 
     # Objective
     def objective_rule(model):
-        return sum(model.hcost[a, h] for a in model.a for h in model.h) / 1_000_000
+        return sum(model.hcost[a, h] for a in model.a for h in model.h)
     model.objective = pyo.Objective(rule=objective_rule)
 
     return model

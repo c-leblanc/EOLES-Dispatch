@@ -14,7 +14,7 @@ The model is **centered on France**: six neighboring countries (Belgium, Germany
 - LP relaxation of unit commitment: captures startup costs, min stable generation, and ramping without integer variables
 - Two model variants: **Standard** (full thermal dynamics) and **Static Thermal** (simplified, faster)
 - HiGHS solver by default (open-source, no license required)
-- Integrated data collection from ENTSO-E and Renewables.ninja
+- Integrated data collection from ENTSO-E, Elexon BMRS (GB), and Renewables.ninja
 - Interactive HTML visualization of inputs and outputs (Plotly)
 - Scenario editor in the browser
 
@@ -26,15 +26,19 @@ git clone https://github.com/c-leblanc/EOLES-Dispatch.git
 cd EOLES-Dispatch
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[collect,viz]"
+pip install ".[collect,viz]"
 
-# 2. Create a run (downloads data automatically on first use)
+# 2. Set up your ENTSO-E API key
+cp .env.example .env
+# Edit .env and add your key (register at https://transparency.entsoe.eu/)
+
+# 3. Create a run (downloads data automatically on first use)
 eoles-dispatch create my_run --scenario baseline --year 2019
 
-# 3. Solve it
+# 4. Solve it
 eoles-dispatch solve my_run
 
-# 4. Visualize results
+# 5. Visualize results
 eoles-dispatch viz my_run
 ```
 
@@ -43,10 +47,15 @@ eoles-dispatch viz my_run
 **Requirements:** Python >= 3.9
 
 ```bash
-pip install -e .            # Core (model + HiGHS solver)
-pip install -e ".[collect]" # + ENTSO-E data collection
-pip install -e ".[viz]"     # + Plotly visualization
-pip install -e ".[dev]"     # Everything + dev tools
+pip install ".[collect]"    # Core + ENTSO-E/Elexon data collection
+pip install ".[viz]"        # Core + Plotly visualization
+pip install ".[collect,viz]"# Both (recommended)
+```
+
+For development (editable install + test tools):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 The default solver is [HiGHS](https://highs.dev/) (bundled via `highspy`). Other solvers (Gurobi, CBC, GLPK) are supported via `--solver`.
@@ -67,7 +76,7 @@ eoles-dispatch create <name> --scenario <scenario> --year <year> [options]
 | `--year 2019` | Simulation year (data must cover this year) |
 | `--months 1` | Restrict to a single month (e.g. January) for fast testing |
 | `--months 6-8` | Restrict to a range of months (e.g. June to August) |
-| `--rn-horizon CU\|NT\|LT` | Renewables.ninja fleet horizon: Current, Near-Term, Long-Term (default: CU) |
+| `--rn-horizon current\|future` | Renewables.ninja wind fleet: `current` (installed ~2020) or `future` (next-gen turbines) |
 | `--actual-cf` | Use historical capacity factors instead of Renewables.ninja |
 | `--no-download` | Don't auto-download missing data |
 
@@ -124,7 +133,8 @@ EOLES-Dispatch/
 │   ├── __main__.py                 # CLI entry point
 │   ├── config.py                   # Model constants & default parameters
 │   ├── run.py                      # Run lifecycle (create, solve, list)
-│   ├── collect.py                  # ENTSO-E & Renewables.ninja data collection
+│   ├── collect.py                  # Data collection orchestrator (ENTSO-E, Elexon, Ninja)
+│   ├── elexon.py                   # Elexon BMRS API client (GB post-Brexit fallback)
 │   ├── viz.py                      # Interactive HTML report generation
 │   ├── format_inputs.py            # Data loading & preprocessing
 │   ├── format_outputs.py           # Result extraction & export
@@ -134,9 +144,12 @@ EOLES-Dispatch/
 ├── scenarios/
 │   ├── baseline/                   # Default scenario (13 CSV files)
 │   └── scenario_editor.html        # Browser-based scenario editor
+├── .env.example                    # Template for environment variables (API keys)
 ├── data/                           # Historical data (gitignored, regenerable)
-│   ├── time_varying_inputs/        # Demand, prices, hydro, nuclear (ENTSO-E)
-│   └── renewable_ninja/            # Wind & solar capacity factors
+│   ├── time_varying_inputs/        # Demand, prices, hydro, nuclear (ENTSO-E / Elexon)
+│   ├── renewable_ninja/            # Wind & solar capacity factors (Ninja)
+│   ├── gap_fill_report.csv/.txt    # Log of gap-filled missing values
+│   └── DATA_COLLECTION.md          # Detailed data pipeline documentation
 └── runs/                           # Run directories (gitignored)
     └── <run_name>/
         ├── run.yaml                # Metadata (scenario, year, status, timestamps)
@@ -186,8 +199,19 @@ eoles-dispatch collect --start 2019 --end 2020
 
 | Source | Data | API |
 |--------|------|-----|
-| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) | Demand, day-ahead prices, hydro inflows, nuclear availability | via [`entsoe-py`](https://github.com/EnergieID/entsoe-py) (requires API key in `ENTSOE_API_KEY` env variable) |
-| [Renewables.ninja](https://www.renewables.ninja/) | Wind (onshore/offshore) and solar PV capacity factors | Public country-level downloads (no API key) |
+| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) | Demand, generation by fuel, day-ahead prices, hydro inflows, nuclear availability | via [`entsoe-py`](https://github.com/EnergieID/entsoe-py) (requires `ENTSOE_API_KEY`) |
+| [Elexon BMRS](https://bmrs.elexon.co.uk/) | Same as ENTSO-E, for GB only (post-Brexit fallback) | [Insights API](https://data.elexon.co.uk/bmrs/api/v1) (free, no key required) |
+| [Renewables.ninja](https://www.renewables.ninja/) | Wind (onshore/offshore) and solar PV capacity factors | Public country-level downloads (no key required) |
+
+**API key setup:**
+
+```bash
+cp .env.example .env
+# Edit .env and add your ENTSO-E API key
+# (register for free at https://transparency.entsoe.eu/)
+```
+
+The key is validated at startup with a quick test query — you'll get a clear error immediately if it's missing or invalid. See [`data/DATA_COLLECTION.md`](data/DATA_COLLECTION.md) for full details on the data pipeline.
 
 ### Country zone mapping
 
@@ -199,7 +223,7 @@ eoles-dispatch collect --start 2019 --end 2020
 | CH | CH | CH | |
 | IT | IT (load), IT_NORD (prices) | IT | Whole country for volumes, North for prices |
 | ES | ES | ES | |
-| UK | GB | GB | Great Britain (excl. Northern Ireland) |
+| UK | GB (→ Elexon post-2021) | GB | Great Britain (excl. Northern Ireland). ENTSO-E data unavailable post-Brexit; automatic Elexon fallback. |
 
 ## Model description
 
@@ -233,7 +257,7 @@ Solve times depend heavily on the time horizon and available RAM:
 |---------|-------------------|----------------------------------|
 | 1 month (744h) | ~600K | ~5 min |
 | 3 months (2160h) | ~1.8M | ~45 min |
-| Full year (8760h) | ~7M | ? h |
+| Full year (8760h) | ~7M | ~1 day |
 
 ## Acknowledgements
 

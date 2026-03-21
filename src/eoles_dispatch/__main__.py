@@ -35,8 +35,8 @@ def main():
     create_parser.add_argument("--scenario", required=True,
                                 help="Scenario name (looks for scenarios/<name>/ dir, then .xlsx)")
     create_parser.add_argument("--year", type=int, required=True, help="Simulation year")
-    create_parser.add_argument("--rn-horizon", default="CU", choices=["CU", "NT", "LT"],
-                                help="Renewable Ninja horizon (default: CU)")
+    create_parser.add_argument("--rn-horizon", default="current", choices=["current", "future"],
+                                help="Renewables.ninja wind fleet: current (installed ~2020) or future (larger turbines, taller towers)")
     create_parser.add_argument("--actual-cf", action="store_true",
                                 help="Use actual historical capacity factors instead of Renewable Ninja")
     create_parser.add_argument("--months", type=str, default=None, metavar="M or M1-M2",

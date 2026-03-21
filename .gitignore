@@ -1,6 +1,9 @@
 # Drafts - work in progress, not part of the repo
 _drafts/
 
+# Environment
+.env
+
 # Python
 __pycache__/
 *.pyc

@@ -13,9 +13,19 @@ import pandas as pd
 
 def load_time_varying_var(data_dir, variable, areas, start, end):
     """Load a single time-varying variable from CSV, filter by date and areas."""
-    df = pd.read_csv(data_dir / "time_varying_inputs" / f"{variable}.csv")
+    csv_path = data_dir / "time_varying_inputs" / f"{variable}.csv"
+    df = pd.read_csv(csv_path)
     df["hour"] = pd.to_datetime(df["hour"])
     df = df[(df["hour"] >= start) & (df["hour"] < end)]
+    if df.empty:
+        available_min = pd.read_csv(csv_path, usecols=["hour"], nrows=1)["hour"].iloc[0]
+        available_max = pd.read_csv(csv_path, usecols=["hour"]).iloc[-1]["hour"]
+        raise ValueError(
+            f"No data for '{variable}' in the requested period "
+            f"{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}. "
+            f"Available data covers {available_min} to {available_max}. "
+            f"Run 'eoles-dispatch collect' to download data for this period."
+        )
     df["hour"] = (df["hour"] - datetime(1970, 1, 1)).dt.total_seconds() / 3600
     df["hour"] = df["hour"].astype(int)
     melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
@@ -24,16 +34,26 @@ def load_time_varying_var(data_dir, variable, areas, start, end):
 
 def load_ninja_var(data_dir, variable, areas, start, end):
     """Load a Renewable Ninja capacity factor variable."""
-    df = pd.read_csv(data_dir / "renewable_ninja" / f"{variable}.csv")
+    csv_path = data_dir / "renewable_ninja" / f"{variable}.csv"
+    df = pd.read_csv(csv_path)
     df["hour"] = pd.to_datetime(df["hour"])
     df = df[(df["hour"] >= start) & (df["hour"] < end)]
+    if df.empty:
+        available_min = pd.read_csv(csv_path, usecols=["hour"], nrows=1)["hour"].iloc[0]
+        available_max = pd.read_csv(csv_path, usecols=["hour"]).iloc[-1]["hour"]
+        raise ValueError(
+            f"No data for '{variable}' in the requested period "
+            f"{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}. "
+            f"Available data covers {available_min} to {available_max}. "
+            f"Run 'eoles-dispatch collect' to download data for this period."
+        )
     df["hour"] = (df["hour"] - datetime(1970, 1, 1)).dt.total_seconds() / 3600
     df["hour"] = df["hour"].astype(int)
     melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
     return melted[["area", "hour", "value"]]
 
 
-def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horizon="CU", months=None):
+def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horizon="current", months=None):
     """Load all time-varying inputs and return them as a dict of DataFrames/lists.
 
     Args:
@@ -64,8 +84,7 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horiz
             vre_profiles = pd.concat([vre_profiles, temp[["area", "tec", "hour", "value"]]])
     else:
         offshore = load_ninja_var(data_dir, f"offshore_{rn_horizon}", areas, start, end)
-        onshore_file = "onshore_NT" if rn_horizon in ("NT", "LT") else "onshore_CU"
-        onshore = load_ninja_var(data_dir, onshore_file, areas, start, end)
+        onshore = load_ninja_var(data_dir, f"onshore_{rn_horizon}", areas, start, end)
         pv = load_ninja_var(data_dir, "pv", areas, start, end)
         offshore["tec"] = "offshore"
         onshore["tec"] = "onshore"
@@ -254,8 +273,6 @@ def xlsx_to_scenario(xlsx_path, output_dir=None):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    import openpyxl  # only needed for conversion
-
     sheets = [
         "thr_specs", "rsv_req", "str_vOM", "capa", "maxAF", "yEAF",
         "capa_in", "stockMax", "links", "exo_IM", "exo_EX",
@@ -297,7 +314,7 @@ def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
 
 
 def prepare_run(run_dir, data_dir, scenario_path, year, areas, exo_areas,
-                actCF=False, rn_horizon="CU"):
+                actCF=False, rn_horizon="current"):
     """Full pipeline: load data, extract scenario, save formatted inputs.
 
     Args:
@@ -308,7 +325,7 @@ def prepare_run(run_dir, data_dir, scenario_path, year, areas, exo_areas,
         areas: List of modeled country codes
         exo_areas: List of non-modeled country codes
         actCF: Use actual historical capacity factors instead of Renewable Ninja
-        rn_horizon: Renewable Ninja time horizon ("CU", "NT", "LT")
+        rn_horizon: Renewables.ninja wind fleet ("current" or "future")
     """
     data_dir = Path(data_dir)
     tv_data = load_tv_inputs(data_dir, year, areas, exo_areas, actCF, rn_horizon)

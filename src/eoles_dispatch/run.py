@@ -23,6 +23,9 @@ from .config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
 def _ensure_data_available(data_dir, year, areas, exo_areas):
     """Check if data for the given year is available, download if not."""
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     tv_dir = data_dir / "time_varying_inputs"
     required_files = ["demand.csv", "nmd.csv", "exoPrices.csv", "lake_inflows.csv",
                       "nucMaxAF.csv", "hMaxIn.csv", "hMaxOut.csv"]
@@ -35,25 +38,47 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
         from .collect import collect_all
         collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="entsoe")
 
-    # Check if year is covered in existing data
-    if tv_dir.exists() and (tv_dir / "demand.csv").exists():
+    # Check if year is covered in ALL required time-varying files
+    hourly_files = ["demand.csv", "nmd.csv", "exoPrices.csv", "river.csv",
+                    "offshore.csv", "onshore.csv", "pv.csv"]
+    if tv_dir.exists():
         import pandas as pd
-        demand = pd.read_csv(tv_dir / "demand.csv", nrows=5)
-        first_date = pd.to_datetime(demand["hour"].iloc[0])
-        if first_date.year > year:
-            print(f"Data starts at {first_date.year}, need {year}. Downloading...")
+        needs_download = False
+        for fname in hourly_files:
+            fpath = tv_dir / fname
+            if not fpath.exists():
+                continue
+            df_check = pd.read_csv(fpath, usecols=["hour"])
+            df_check["hour"] = pd.to_datetime(df_check["hour"])
+            first_year = df_check["hour"].dt.year.min()
+            last_year = df_check["hour"].dt.year.max()
+            if year < first_year or year > last_year:
+                print(f"  {fname} covers {first_year}-{last_year}, need {year}.")
+                needs_download = True
+                break
+        if needs_download:
+            print(f"Downloading ENTSO-E data for {year}...")
             from .collect import collect_all
             collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="entsoe")
 
     # Check Renewables.ninja data
     ninja_dir = data_dir / "renewable_ninja"
-    ninja_files = ["pv.csv", "onshore_CU.csv", "offshore_CU.csv"]
+    ninja_files = ["pv.csv", "onshore_current.csv", "offshore_current.csv"]
     ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
 
     if ninja_missing:
         print(f"Renewable Ninja data not found in {ninja_dir}, downloading...")
         from .collect import collect_ninja
         collect_ninja(ninja_dir, areas=areas)
+
+        # Verify download succeeded
+        still_missing = [f for f in ninja_files if not (ninja_dir / f).exists()]
+        if still_missing:
+            raise RuntimeError(
+                f"Failed to download Renewables.ninja data. "
+                f"Missing files: {still_missing}. "
+                f"Check your internet connection, or provide the data manually in {ninja_dir}/"
+            )
 
 
 def create_run(
@@ -64,7 +89,7 @@ def create_run(
     areas=None,
     exo_areas=None,
     actCF=False,
-    rn_horizon="CU",
+    rn_horizon="current",
     auto_download=True,
     months=None,
 ):
@@ -78,7 +103,7 @@ def create_run(
         areas: List of modeled country codes.
         exo_areas: List of non-modeled country codes.
         actCF: Use actual historical capacity factors.
-        rn_horizon: Renewable Ninja horizon ("CU", "NT", "LT").
+        rn_horizon: Renewables.ninja wind fleet ("current" or "future").
         auto_download: Automatically download missing data.
 
     Returns:
@@ -207,6 +232,7 @@ def solve_run(
 
     print(f"Solving run '{name}' (scenario={metadata['scenario']}, year={metadata['year']})")
     start_time = time.localtime()
+    start_monotonic = time.monotonic()
 
     # Build model
     build_model = MODEL_REGISTRY.get(version)
@@ -228,6 +254,17 @@ def solve_run(
 
     results = opt.solve(model, tee=True)
 
+    # Check solver status
+    from pyomo.opt import TerminationCondition
+    tc = results.solver.termination_condition
+    if tc not in (TerminationCondition.optimal, TerminationCondition.feasible):
+        raise RuntimeError(
+            f"Solver did not find an optimal solution. "
+            f"Termination condition: {tc}. Check model feasibility."
+        )
+    if tc == TerminationCondition.feasible:
+        print(f"  Warning: solver returned a feasible (but not proven optimal) solution.")
+
     # Create outputs directory
     (run_dir / "outputs").mkdir(exist_ok=True)
 
@@ -243,8 +280,10 @@ def solve_run(
         if report_name in report_map:
             report_map[report_name](model, run_dir)
 
-    exec_time = time.gmtime(time.time() - time.mktime(start_time))
-    exec_str = time.strftime("%H:%M:%S", exec_time)
+    elapsed_seconds = int(time.monotonic() - start_monotonic)
+    hours, remainder = divmod(elapsed_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    exec_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     print(f"  Done in {exec_str}")
 
     # Update metadata
@@ -257,7 +296,7 @@ def solve_run(
     with open(meta_path, "w") as f:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
-    write_log(run_dir, model, name, metadata["scenario"], metadata["year"], start_time, exec_time)
+    write_log(run_dir, model, name, metadata["scenario"], metadata["year"], start_time, exec_str)
 
     del model, opt
     gc.collect()
