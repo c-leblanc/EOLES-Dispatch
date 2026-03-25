@@ -111,10 +111,11 @@ AREA_CODES = { # Matching to ENTSOE area codes
     "IE": "IE_SEM",
 }
 #   DE → "DE_LU" (bidding zone, includes Luxembourg since Oct 2018).
+#        Before Oct 2018 the zone was DE_AT_LU (incl. Austria + Luxembourg).
+#        Time-dependent resolution (DE_AT_LU / DE_LU) is handled by
+#        entsoe.py:_resolve_area(), not here — this dict stores the
+#        *current* default.
 #        LU is ~0.6 GW peak vs DE ~80 GW, so the impact is negligible.
-#        We use the bidding zone rather than control area because ENTSO-E
-#        data availability is better at bidding-zone level, and prices are
-#        only published for DE_LU (not DE alone).
 #        Renewables.ninja uses DE-only data, which is consistent since LU
 #        wind/solar capacity is negligible relative to DE.
 #   IT → "IT" (whole country, control area). NOT IT_NORD or other sub-zones.
@@ -130,8 +131,9 @@ AREA_CODES_PRICE = {
     "IT": "IT_NORD",
 }
 # For day-ahead prices, some areas need a different code than for load/generation.
-# DE prices were published under DE-AT-LU until Oct 2018, then DE-LU.
-# entsoe-py handles this automatically when using DE_LU.
+# DE prices followed the same zone transition as load/generation
+# (DE_AT_LU → DE_LU in Oct 2018); this is handled by
+# entsoe.py:_resolve_area_price().
 # IT prices use IT_NORD (the reference price zone), not IT (which has no price).
 
 

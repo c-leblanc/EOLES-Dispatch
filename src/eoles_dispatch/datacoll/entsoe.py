@@ -44,9 +44,13 @@ Internal helpers:
     col_matches(col, fuel_type)
         Match an ENTSO-E column name to our internal fuel type key.
     area_code(area)
-        Map our area code to an entsoe-py bidding zone code.
+        Map our area code to an entsoe-py bidding zone code (static, current default).
     area_code_price(area)
-        Map our area code to an entsoe-py price zone code.
+        Map our area code to an entsoe-py price zone code (static).
+    _resolve_area(area, start, end)
+        Time-dependent area resolution (handles DE_AT_LU → DE_LU transition).
+    _resolve_area_price(area, start, end)
+        Time-dependent price-area resolution (adds IT → IT_NORD override).
 
 Constants:
     ENTSOE_COL_NAMES    Human-readable column name mapping.
@@ -208,13 +212,52 @@ def area_code_price(area):
     return AREA_CODES_PRICE.get(area, area_code(area))
 
 
+# Germany switched from DE_AT_LU to DE_LU bidding zone on 1 October 2018.
+# Naive UTC equivalent: 2018-09-30 22:00 (Oct 1 00:00 CET = UTC+2 in CEST).
+_DE_TRANSITION = pd.Timestamp("2018-09-30 22:00:00")
+
+
+def _resolve_area(area, start, end):
+    """Return [(entsoe_code, period_start, period_end), ...] for an area.
+
+    Handles the DE bidding zone transition (DE_AT_LU → DE_LU, Oct 2018).
+    For all other areas, returns a single period with the standard code.
+    """
+    if area == "DE":
+        s, e = pd.Timestamp(start), pd.Timestamp(end)
+        if e <= _DE_TRANSITION:
+            return [("DE_AT_LU", s, e)]
+        elif s >= _DE_TRANSITION:
+            return [("DE_LU", s, e)]
+        else:
+            return [("DE_AT_LU", s, _DE_TRANSITION),
+                    ("DE_LU", _DE_TRANSITION, e)]
+    code = AREA_CODES.get(area)
+    if code is None:
+        raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
+    return [(code, pd.Timestamp(start), pd.Timestamp(end))]
+
+
+def _resolve_area_price(area, start, end):
+    """Like _resolve_area but with price-specific overrides (IT → IT_NORD).
+
+    IT prices always use IT_NORD (time-independent).
+    DE prices follow the same zone transition as load/generation.
+    """
+    if area in AREA_CODES_PRICE:
+        code = AREA_CODES_PRICE[area]
+        return [(code, pd.Timestamp(start), pd.Timestamp(end))]
+    return _resolve_area(area, start, end)
+
+
 # ── Demand ──
 
 def fetch_demand(client, area, start, end):
     """Fetch hourly actual load from ENTSO-E for a single area, in MW.
 
     Handles tz conversion (naive UTC → CET for entsoe-py) and resampling
-    to hourly naive UTC. Caller is responsible for reindexing onto canonical_index.
+    to hourly naive UTC. For DE, splits at the Oct 2018 zone transition.
+    Caller is responsible for reindexing onto canonical_index.
 
     Args:
         client: EntsoePandasClient.
@@ -225,14 +268,18 @@ def fetch_demand(client, area, start, end):
         pd.Series indexed by hourly naive UTC timestamps, values in MW.
         Returns None if the download fails or returns empty data.
     """
-    api_start, api_end = _to_api_timestamps(start, end)
-    raw = client.query_load(area_code(area), start=api_start, end=api_end)
-    if raw is None or (hasattr(raw, "__len__") and len(raw) == 0):
+    periods = _resolve_area(area, start, end)
+    parts = []
+    for code, p_start, p_end in periods:
+        api_start, api_end = _to_api_timestamps(p_start, p_end)
+        raw = client.query_load(code, start=api_start, end=api_end)
+        if raw is not None and (not hasattr(raw, "__len__") or len(raw) > 0):
+            if isinstance(raw, pd.DataFrame):
+                raw = raw.iloc[:, 0]
+            parts.append(resample_to_hourly(raw))
+    if not parts:
         return None
-    if isinstance(raw, pd.DataFrame):
-        raw = raw.iloc[:, 0]
-    series = resample_to_hourly(raw)
-    return series
+    return pd.concat(parts).sort_index()
 
 
 # ── Day-ahead prices ──
@@ -241,6 +288,7 @@ def fetch_day_ahead_prices(client, area, start, end):
     """Fetch hourly day-ahead prices from ENTSO-E for a single area, in EUR/MWh.
 
     Handles tz conversion and resampling to hourly naive UTC.
+    For DE, splits at the Oct 2018 zone transition.
 
     Args:
         client: EntsoePandasClient.
@@ -251,14 +299,18 @@ def fetch_day_ahead_prices(client, area, start, end):
         pd.Series indexed by hourly naive UTC timestamps, values in EUR/MWh.
         Returns None if the download fails or returns empty data.
     """
-    api_start, api_end = _to_api_timestamps(start, end)
-    prices = client.query_day_ahead_prices(area_code_price(area), start=api_start, end=api_end)
-    if prices is None or (hasattr(prices, "__len__") and len(prices) == 0):
+    periods = _resolve_area_price(area, start, end)
+    parts = []
+    for code, p_start, p_end in periods:
+        api_start, api_end = _to_api_timestamps(p_start, p_end)
+        prices = client.query_day_ahead_prices(code, start=api_start, end=api_end)
+        if prices is not None and (not hasattr(prices, "__len__") or len(prices) > 0):
+            if isinstance(prices, pd.DataFrame):
+                prices = prices.iloc[:, 0]
+            parts.append(resample_to_hourly(prices))
+    if not parts:
         return None
-    if isinstance(prices, pd.DataFrame):
-        prices = prices.iloc[:, 0]
-    series = resample_to_hourly(prices)
-    return series
+    return pd.concat(parts).sort_index()
 
 
 # ── Generation by fuel type ──
@@ -278,6 +330,7 @@ def fetch_generation(client, area, start, end):
     Downloads all PSR types at once and extracts per-fuel production.
     PHS is split into phs_prod (generation) and phs_cons (pumping, positive).
     All series are converted to hourly naive UTC.
+    For DE, splits at the Oct 2018 zone transition.
 
     Args:
         client: EntsoePandasClient.
@@ -289,10 +342,16 @@ def fetch_generation(client, area, start, end):
         fuel type found. PHS appears as 'phs_prod' and 'phs_cons'.
         Returns None if the download fails or returns empty data.
     """
-    api_start, api_end = _to_api_timestamps(start, end)
-    raw = client.query_generation(area_code(area), start=api_start, end=api_end, psr_type=None)
-    if not isinstance(raw, pd.DataFrame) or raw.empty:
+    periods = _resolve_area(area, start, end)
+    raw_parts = []
+    for code, p_start, p_end in periods:
+        api_start, api_end = _to_api_timestamps(p_start, p_end)
+        part = client.query_generation(code, start=api_start, end=api_end, psr_type=None)
+        if isinstance(part, pd.DataFrame) and not part.empty:
+            raw_parts.append(part)
+    if not raw_parts:
         return None
+    raw = pd.concat(raw_parts).sort_index()
 
     result = {}
 
