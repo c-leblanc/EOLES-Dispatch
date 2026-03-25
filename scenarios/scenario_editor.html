@@ -149,7 +149,7 @@ const SCHEMA = [
   },
   {
     id: 'fuel_timeFactor', label: 'Fuel time factor',
-    desc: 'Monthly fuel price correction factors (index, average ≈ 1)',
+    desc: 'Seasonal fuel price weights (calendar months 1-12, mean must equal 1 per fuel)',
     rowKey: 'month', areaColumns: true, validation: { min: 0 }
   },
   {
@@ -383,10 +383,21 @@ const BASELINE = {
     {area:'ES',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0.65,OIL:0},
     {area:'UK',BIOMASS:0,NUCLEAR:0,LIGNITE:0,COAL:0,GAS:0,OIL:0},
   ],
+  fuel_timeFactor: [
+    {month:1,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.030368,GAS:1.139644,OIL:0.916432},
+    {month:2,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.966574,GAS:1.048295,OIL:0.965922},
+    {month:3,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.942536,GAS:0.982139,OIL:0.978233},
+    {month:4,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.913093,GAS:0.933069,OIL:1.040350},
+    {month:5,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.929308,GAS:0.943025,OIL:1.083335},
+    {month:6,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.952635,GAS:0.924304,OIL:1.035978},
+    {month:7,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:0.998151,GAS:0.932610,OIL:1.007543},
+    {month:8,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.012659,GAS:0.933949,OIL:0.968405},
+    {month:9,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.037764,GAS:1.021450,OIL:1.013524},
+    {month:10,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.081360,GAS:1.060928,OIL:1.032865},
+    {month:11,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.081004,GAS:1.058069,OIL:0.984004},
+    {month:12,BIOMASS:1,NUCLEAR:1,LIGNITE:1,COAL:1.054548,GAS:1.022519,OIL:0.973407},
+  ],
 };
-
-// Note: fuel_timeFactor has 60 rows (monthly 2015-2019), too large to embed.
-// It will show empty until CSVs are loaded. Load from baseline/ folder to populate.
 
 // ─── Initialize with baseline ───
 

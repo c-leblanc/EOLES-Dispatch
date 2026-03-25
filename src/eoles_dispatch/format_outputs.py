@@ -49,8 +49,8 @@ def report_prices(model, run_dir):
     """Extract hourly marginal prices (dual of adequacy constraint) for each area."""
     output_dir = _ensure_output_dir(run_dir)
 
-    areas = list(model.a)
-    hours = list(model.h)
+    areas = sorted(model.a)
+    hours = sorted(model.h)
 
     # Build all (area, hour) keys and extract duals in bulk
     keys = [(a, h) for a in areas for h in hours]
@@ -101,8 +101,10 @@ def report_production(model, run_dir):
                  "wind", "coal", "gas", "oil", "battery", "phs_in", "battery_in",
                  "net_imports"],
     )
-    production.area = np.repeat(list(model.a._values), len(model.h), axis=0)
-    production.hour = list(model.h._values) * len(model.a)
+    areas = sorted(model.a)
+    hours = sorted(model.h)
+    production.area = np.repeat(areas, len(hours), axis=0)
+    production.hour = hours * len(areas)
 
     # Individual technologies
     for tec in ["nmd", "pv", "river", "nuclear", "lake_phs", "battery"]:
@@ -136,21 +138,26 @@ def report_production(model, run_dir):
     production.phs_in = (-_safe_var_values(stor_vals, "lake_phs", n_rows)).tolist()
     production.battery_in = (-_safe_var_values(stor_vals, "battery", n_rows)).tolist()
 
-    # Net imports
+    # Net imports per area: sum over all trading partners
     areas = list(model.a)
     exo_areas = list(model.exo_a)
-    net_im = np.zeros(n_rows)
-    for trader in areas:
-        im_keys = sorted(k for k in im_vals if k[1] == trader)
-        ex_keys = sorted(k for k in ex_vals if k[1] == trader)
-        if im_keys and ex_keys:
-            net_im += np.array([im_vals[k] or 0.0 for k in im_keys]) - np.array([ex_vals[k] or 0.0 for k in ex_keys])
-    for trader in exo_areas:
-        exo_im_keys = sorted(k for k in exo_im_vals if k[1] == trader)
-        exo_ex_keys = sorted(k for k in exo_ex_vals if k[1] == trader)
-        if exo_im_keys and exo_ex_keys:
-            net_im += np.array([exo_im_vals[k] or 0.0 for k in exo_im_keys]) - np.array([exo_ex_vals[k] or 0.0 for k in exo_ex_keys])
-    production.net_imports = net_im.tolist()
+    hours = sorted(model.h)
+    n_hours = len(hours)
+    net_imports_list = []
+    for a in areas:
+        area_net = np.zeros(n_hours)
+        # Imports from other modeled areas
+        for trader in areas:
+            if trader == a:
+                continue
+            area_net += np.array([im_vals.get((a, trader, h), 0) or 0.0 for h in hours])
+            area_net -= np.array([ex_vals.get((a, trader, h), 0) or 0.0 for h in hours])
+        # Imports from exogenous areas
+        for trader in exo_areas:
+            area_net += np.array([exo_im_vals.get((a, trader, h), 0) or 0.0 for h in hours])
+            area_net -= np.array([exo_ex_vals.get((a, trader, h), 0) or 0.0 for h in hours])
+        net_imports_list.append(area_net)
+    production.net_imports = np.concatenate(net_imports_list).tolist()
 
     production = production.set_index(["area", "hour"])
 
@@ -178,8 +185,10 @@ def report_capa_on(model, run_dir):
     thr_tecs = list(model.thr)
 
     capa_on = pd.DataFrame(index=range(n_rows))
-    capa_on["area"] = np.repeat(list(model.a._values), len(model.h), axis=0)
-    capa_on["hour"] = list(model.h._values) * len(model.a)
+    areas = sorted(model.a)
+    hours = sorted(model.h)
+    capa_on["area"] = np.repeat(areas, len(hours), axis=0)
+    capa_on["hour"] = hours * len(areas)
     for thr in thr_tecs:
         capa_on[thr] = _safe_var_values(on_vals, thr, n_rows).tolist()
     capa_on = capa_on.set_index(["area", "hour"])
@@ -189,13 +198,16 @@ def report_capa_on(model, run_dir):
 def report_FRtrade(model, run_dir):
     """Extract France's hourly net imports from each trading partner."""
     output_dir = _ensure_output_dir(run_dir)
-    FRtrade = pd.DataFrame(index=range(len(model.h)), columns=["hour"] + list(model.a._values))
-    FRtrade.hour = list(model.h._values)
-    for a in model.a:
-        FRtrade[a] = (
-            np.array(pyo.value(model.im["FR", a, :])) * (1 - TRLOSS)
-            - np.array(pyo.value(model.ex["FR", a, :]))
-        ).tolist()
+    hours = sorted(model.h)
+    partners = sorted(a for a in model.a if a != "FR")
+    im_vals = _extract_var_values_bulk(model.im)
+    ex_vals = _extract_var_values_bulk(model.ex)
+
+    FRtrade = pd.DataFrame({"hour": hours})
+    for a in partners:
+        im_arr = np.array([im_vals.get(("FR", a, h), 0) or 0.0 for h in hours])
+        ex_arr = np.array([ex_vals.get(("FR", a, h), 0) or 0.0 for h in hours])
+        FRtrade[a] = (im_arr * (1 - TRLOSS) - ex_arr).tolist()
     FRtrade = FRtrade.set_index("hour")
     FRtrade.to_csv(output_dir / "FRtrade.csv", index=True)
 

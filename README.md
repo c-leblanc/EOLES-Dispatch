@@ -80,7 +80,7 @@ eoles-dispatch create <name> --scenario <scenario> --year <year> [options]
 | `--actual-cf` | Use historical capacity factors instead of Renewables.ninja |
 | `--no-download` | Don't auto-download missing data |
 
-The `--months` option is useful for fast testing: 1 month solves in ~4 minutes on a laptop, vs 30+ minutes for a full year.
+The `--months` option is useful for fast testing: 1 month solves in ~4 minutes on a laptop.
 
 ### Solving a run
 
@@ -133,16 +133,26 @@ EOLES-Dispatch/
 │   ├── __main__.py                 # CLI entry point
 │   ├── config.py                   # Model constants & default parameters
 │   ├── run.py                      # Run lifecycle (create, solve, list)
-│   ├── collect.py                  # Data collection orchestrator (ENTSO-E, Elexon, Ninja)
-│   ├── elexon.py                   # Elexon BMRS API client (GB post-Brexit fallback)
 │   ├── viz.py                      # Interactive HTML report generation
 │   ├── format_inputs.py            # Data loading & preprocessing
 │   ├── format_outputs.py           # Result extraction & export
+│   ├── utils.py                    # Utility functions
+│   ├── datacoll/                   # Data collection module
+│   │   ├── main_collect.py         # Data collection orchestrator
+│   │   ├── entsoe.py               # ENTSO-E API client
+│   │   ├── elexon.py               # Elexon BMRS API client (GB post-Brexit fallback)
+│   │   ├── rninja.py               # Renewables.ninja data fetching
+│   │   └── gap_filling.py          # Missing data gap-filling logic
 │   └── models/
 │       ├── default.py              # Standard model (startup, ramping, part-load)
 │       └── static_thermal.py       # Simplified model (no thermal dynamics)
+├── tests/                          # Test suite (pytest)
+├── .github/                        # CI/CD configuration
+│   └── workflows/
+│       └── test.yml                # GitHub Actions test workflow
+├── docs/                           # Documentation
 ├── scenarios/
-│   ├── baseline/                   # Default scenario (13 CSV files)
+│   ├── baseline/                   # Default scenario (12 CSV files)
 │   └── scenario_editor.html        # Browser-based scenario editor
 ├── .env.example                    # Template for environment variables (API keys)
 ├── data/                           # Historical data (gitignored, regenerable)
@@ -161,7 +171,7 @@ EOLES-Dispatch/
 
 ## Scenarios
 
-A scenario is a directory of 13 CSV files describing the power system configuration:
+A scenario is a directory of 12 CSV files describing the power system configuration:
 
 | File | Description |
 |------|-------------|
@@ -175,7 +185,7 @@ A scenario is a directory of 13 CSV files describing the power system configurat
 | `yEAF.csv` | Yearly energy availability factors |
 | `capa_in.csv` | Storage charging capacity (GW) |
 | `stockMax.csv` | Storage reservoir volume (GWh) |
-| `fuel_timeFactor.csv` | Monthly fuel price correction factors |
+| `fuel_timeFactor.csv` | Seasonal fuel price weights (calendar months 1–12, mean = 1 per fuel) |
 | `fuel_areaFactor.csv` | Country-specific fuel price correction factors |
 
 ### Editing scenarios
@@ -248,6 +258,20 @@ The dual variable of the adequacy constraint gives the **marginal price** in eac
 | `TRLOSS` | 2% | Transmission losses on cross-border flows |
 | `ETA_IN` | 95% / 90% | Charging efficiency (PHS / battery) |
 | `ETA_OUT` | 90% / 95% | Discharging efficiency (PHS / battery) |
+
+## Tests
+
+```bash
+# Run the full test suite (~74 tests, <2s)
+pytest tests/ -v
+
+# With timing details
+pytest tests/ -v --durations=0
+```
+
+Tests cover configuration constants, ENTSO-E column matching, time series processing, timezone handling, fuel price seasonality expansion, model construction (both standard and static thermal variants), CLI smoke tests, and more. No solver or API calls are needed — everything runs offline with synthetic fixtures.
+
+CI runs automatically on push via GitHub Actions (Python 3.9 / 3.11 / 3.12).
 
 ## Performance notes
 

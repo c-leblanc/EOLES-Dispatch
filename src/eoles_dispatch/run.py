@@ -22,44 +22,38 @@ from .config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
 
 def _ensure_data_available(data_dir, year, areas, exo_areas):
-    """Check if data for the given year is available, download if not."""
+    """Check if data for the given year is available, download if not.
+
+    Checks for year-based directory structure: data/<year>/.
+    If the year directory is missing, triggers a collect.
+    If marked as corrupt (data/<year>_corrupt), raises an error.
+    """
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    tv_dir = data_dir / "time_varying_inputs"
-    required_files = ["demand.csv", "nmd.csv", "exoPrices.csv", "lake_inflows.csv",
-                      "nucMaxAF.csv", "hMaxIn.csv", "hMaxOut.csv"]
+    year_dir = data_dir / str(year)
+    corrupt_dir = data_dir / f"{year}_corrupt"
 
-    # Check if any required file is missing
-    missing = not tv_dir.exists() or not all((tv_dir / f).exists() for f in required_files)
+    if corrupt_dir.exists():
+        raise RuntimeError(
+            f"Data for {year} is marked as corrupt ({corrupt_dir}). "
+            f"Delete the corrupt directory and re-run: "
+            f"eoles-dispatch collect --start {year} --end {year + 1} --force"
+        )
 
-    if missing:
-        print(f"Data not found in {tv_dir}, downloading from ENTSO-E...")
-        from .collect import collect_all
+    if not year_dir.exists():
+        print(f"Data for {year} not found, downloading from ENTSO-E...")
+        from .datacoll.main_collect import collect_all
         collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="entsoe")
 
-    # Check if year is covered in ALL required time-varying files
-    hourly_files = ["demand.csv", "nmd.csv", "exoPrices.csv", "river.csv",
-                    "offshore.csv", "onshore.csv", "pv.csv"]
-    if tv_dir.exists():
-        import pandas as pd
-        needs_download = False
-        for fname in hourly_files:
-            fpath = tv_dir / fname
-            if not fpath.exists():
-                continue
-            df_check = pd.read_csv(fpath, usecols=["hour"])
-            df_check["hour"] = pd.to_datetime(df_check["hour"])
-            first_year = df_check["hour"].dt.year.min()
-            last_year = df_check["hour"].dt.year.max()
-            if year < first_year or year > last_year:
-                print(f"  {fname} covers {first_year}-{last_year}, need {year}.")
-                needs_download = True
-                break
-        if needs_download:
-            print(f"Downloading ENTSO-E data for {year}...")
-            from .collect import collect_all
-            collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="entsoe")
+        # Verify the collect succeeded
+        if not year_dir.exists():
+            if (data_dir / f"{year}_corrupt").exists():
+                raise RuntimeError(
+                    f"Data collection for {year} failed validation. "
+                    f"Check {data_dir / f'{year}_corrupt'} for details."
+                )
+            raise RuntimeError(f"Data collection for {year} did not produce {year_dir}.")
 
     # Check Renewables.ninja data
     ninja_dir = data_dir / "renewable_ninja"
@@ -68,7 +62,7 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
 
     if ninja_missing:
         print(f"Renewable Ninja data not found in {ninja_dir}, downloading...")
-        from .collect import collect_ninja
+        from .datacoll.rninja import collect_ninja
         collect_ninja(ninja_dir, areas=areas)
 
         # Verify download succeeded
@@ -146,13 +140,21 @@ def create_run(
     print(f"Creating run '{name}'...")
 
     # Format and save inputs
+    # New flow: scenario first (needs hour_month), then tv_data (needs scenario_capa)
     from .format_inputs import load_tv_inputs, extract_scenario, save_inputs
+    from .utils import compute_hour_mappings
 
-    print("  Loading time-varying data...")
-    tv_data = load_tv_inputs(data_dir, year, areas, exo_areas, actCF, rn_horizon, months=months)
+    print("  Computing time mappings...")
+    hour_month, hour_week = compute_hour_mappings(year, months=months)
 
     print("  Loading scenario parameters...")
-    scenario_data = extract_scenario(scenario_path, areas, exo_areas, tv_data["hour_month"])
+    scenario_data = extract_scenario(scenario_path, areas, exo_areas, hour_month)
+
+    print("  Loading time-varying data and computing derived variables...")
+    tv_data = load_tv_inputs(
+        data_dir, year, areas, exo_areas, actCF, rn_horizon,
+        months=months, scenario_capa=scenario_data["capa"],
+    )
 
     print("  Saving formatted inputs...")
     save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)

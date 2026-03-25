@@ -13,6 +13,7 @@ dist/
 build/
 .venv/
 venv/
+.pytest_cache/
 
 # Solver binaries
 *.exe
@@ -29,6 +30,7 @@ data/
 
 # Claude Code project memory
 .claude/
+CLAUDE.md
 
 # Scenarios: only track baseline, editor and Excel template
 scenarios/*

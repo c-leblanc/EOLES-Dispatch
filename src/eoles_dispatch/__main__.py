@@ -71,6 +71,8 @@ def main():
                                 help="Data source to collect (default: all)")
     collect_parser.add_argument("--output-dir", type=Path, default=None,
                                 help="Output directory (default: data/)")
+    collect_parser.add_argument("--force", action="store_true",
+                                help="Re-download even if year data already exists")
     _add_project_dir(collect_parser)
 
     # --- viz command ---
@@ -142,10 +144,13 @@ def main():
     elif args.command == "collect":
         import logging
         logging.basicConfig(level=logging.INFO, format="%(message)s")
-        from .collect import collect_all
+        if args.end <= args.start:
+            parser.error(f"--end ({args.end}) must be greater than --start ({args.start}). "
+                         f"Note: --end is exclusive, so use --end {args.start + 1} to collect year {args.start}.")
+        from .datacoll.main_collect import collect_all
         project_dir = args.project_dir or Path.cwd()
         output_dir = args.output_dir or project_dir / "data"
-        collect_all(output_dir, args.start, args.end, source=args.source)
+        collect_all(output_dir, args.start, args.end, source=args.source, force=args.force)
 
     elif args.command == "viz":
         from .viz import generate_report

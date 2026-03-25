@@ -1,13 +1,48 @@
 """Elexon BMRS Insights API client for GB electricity data.
 
-Since Brexit (~mid-2021), Great Britain no longer transmits data to ENTSO-E.
-This module provides equivalent data from the Elexon BMRS Insights API, which
-is the official data platform for the GB electricity market.
+Since Brexit (~mid-2021), Great Britain no longer transmits complete data to
+ENTSO-E. This module provides equivalent data from the Elexon BMRS Insights
+API, used as an automatic fallback for UK in main_collect.py.
 
 The Insights API is free, public, and requires no API key or registration.
+All returned DataFrames follow the project convention: hourly naive UTC.
 
 API documentation: https://bmrs.elexon.co.uk/api-documentation
 Base URL: https://data.elexon.co.uk/bmrs/api/v1
+
+Delegates to:
+    - utils.py      resample_to_hourly (tz normalization + resample).
+
+Called from:
+    - main_collect.py   fetch_demand (from collect_demand, UK fallback),
+                        fetch_generation (from collect_production, UK fallback).
+
+Functions:
+    fetch_demand(start, end)
+        Fetch half-hourly GB demand from /demand/outturn, resample to
+        hourly naive UTC. Returns a Series (MW).
+        Called from main_collect.collect_demand.
+
+    fetch_generation(start, end)
+        Fetch generation by fuel type from /generation/actual/per-type.
+        Splits PHS into phs_prod/phs_cons. Returns a DataFrame with
+        'hour' column (naive UTC) and one column per fuel.
+        Called from main_collect.collect_production, fetch_generation_for_fuel.
+
+    fetch_generation_for_fuel(start, end, fuel)
+        Convenience wrapper: fetch_generation then extract a single fuel.
+        Not currently called internally (available for ad-hoc use).
+
+    fetch_day_ahead_prices(start, end, gbp_to_eur=1.18)
+        Fetch GB day-ahead prices (N2EX/APX), convert GBP to EUR.
+        Not currently called internally (available for ad-hoc use).
+        TODO: fetch live GBP/EUR rate instead of hardcoded value.
+
+Internal helpers:
+    _fetch_json(endpoint, params)   - Raw API call.
+    _date_chunks(start, end)        - Split range into 7-day chunks.
+    _settlement_period_to_time()    - Settlement period -> UTC timestamp.
+    _to_hourly_utc(df, value_col)   - Extract column + resample_to_hourly.
 """
 
 import json
@@ -17,6 +52,8 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+
+from ..utils import resample_to_hourly
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +68,7 @@ _CHUNK_DAYS = 7
 PSR_MAP = {
     "Biomass": "biomass",
     "Fossil Gas": "gas",
-    "Fossil Hard Coal": "hard_coal",
+    "Fossil Hard coal": "hard_coal",
     "Fossil Oil": "oil",
     "Hydro Pumped Storage": "phs",
     "Hydro Run-of-river and poundage": "river",
@@ -42,8 +79,6 @@ PSR_MAP = {
     "Wind Onshore": "onshore",
 }
 
-# NMD fuel types (same definition as in collect.py)
-NMD_PSR_TYPES = {"Biomass", "Other"}
 
 
 def _fetch_json(endpoint, params):
@@ -87,21 +122,24 @@ def _settlement_period_to_time(date_str, period):
     return base + pd.Timedelta(minutes=30 * (period - 1))
 
 
-def _to_hourly_mean(df, value_col="value"):
-    """Resample half-hourly data to hourly means."""
+def _to_hourly_utc(df, value_col="value"):
+    """Extract a column from a timestamped DataFrame and convert to hourly naive UTC.
+
+    Uses the shared resample_to_hourly helper for tz handling and resampling.
+    """
     if df.empty:
         return pd.Series(dtype=float)
     series = df.set_index("timestamp")[value_col].sort_index()
-    # Remove timezone for consistency with ENTSO-E data (which is tz-naive after
-    # entsoe-py processing)
-    series.index = series.index.tz_localize(None)
-    return series.resample("h").mean()
+    return resample_to_hourly(series)
 
 
 # ── Demand ──────────────────────────────────────────────────────────────────
 
 def fetch_demand(start, end):
     """Fetch actual total load for GB from Elexon, in MW.
+
+    Uses the /demand/outturn endpoint (INDO/ITSDO datasets) which provides
+    half-hourly demand outturn by settlement date and period.
 
     Args:
         start: Start datetime (pd.Timestamp or datetime).
@@ -110,13 +148,12 @@ def fetch_demand(start, end):
     Returns:
         pd.Series indexed by hourly UTC timestamps, values in MW.
     """
-    logger.info("  Fetching GB demand from Elexon BMRS")
     records = []
 
     for chunk_start, chunk_end in _date_chunks(start, end):
-        data = _fetch_json("/demand/actual/total", {
-            "from": chunk_start.strftime("%Y-%m-%dT%H:%MZ"),
-            "to": chunk_end.strftime("%Y-%m-%dT%H:%MZ"),
+        data = _fetch_json("/demand/outturn", {
+            "settlementDateFrom": chunk_start.strftime("%Y-%m-%d"),
+            "settlementDateTo": chunk_end.strftime("%Y-%m-%d"),
         })
         if data is None or "data" not in data:
             continue
@@ -125,14 +162,18 @@ def fetch_demand(start, end):
             ts = _settlement_period_to_time(
                 rec["settlementDate"], rec["settlementPeriod"]
             )
-            records.append({"timestamp": ts, "value": rec["quantity"]})
+            records.append({
+                "timestamp": ts,
+                "value": rec.get("initialDemandOutturn", 0) or 0,
+            })
 
     if not records:
         logger.warning("  No demand data returned from Elexon")
         return pd.Series(dtype=float)
 
     df = pd.DataFrame(records)
-    return _to_hourly_mean(df)
+    series = _to_hourly_utc(df)
+    return series
 
 
 # ── Generation by fuel type ─────────────────────────────────────────────────
@@ -140,16 +181,18 @@ def fetch_demand(start, end):
 def fetch_generation(start, end):
     """Fetch actual generation by fuel type for GB from Elexon, in MW.
 
+    PHS is split into 'phs_prod' (generation, positive) and 'phs_cons'
+    (pumping, positive). All other fuel types appear as individual columns.
+
     Args:
         start: Start datetime.
         end: End datetime.
 
     Returns:
-        pd.DataFrame with hourly UTC index and one column per fuel type
-        (using our internal names: biomass, gas, nuclear, solar, onshore, etc.).
-        Values in MW.
+        pd.DataFrame with 'hour' column (naive UTC) and one column per
+        fuel type. Values in MW. Returns None if no data.
     """
-    logger.info("  Fetching GB generation by type from Elexon BMRS")
+
     records = []
 
     for chunk_start, chunk_end in _date_chunks(start, end):
@@ -166,6 +209,7 @@ def fetch_generation(start, end):
                 psr_type = gen.get("psrType", "")
                 our_name = PSR_MAP.get(psr_type)
                 if our_name is None:
+                    logger.debug(f"  Unmapped Elexon psrType: {psr_type!r}")
                     continue
                 records.append({
                     "timestamp": ts,
@@ -175,36 +219,31 @@ def fetch_generation(start, end):
 
     if not records:
         logger.warning("  No generation data returned from Elexon")
-        return pd.DataFrame()
+        return None
 
     df = pd.DataFrame(records)
     # Pivot to wide format: one column per fuel type
     pivot = df.pivot_table(
         index="timestamp", columns="fuel", values="value", aggfunc="mean"
     )
-    # Remove timezone
-    pivot.index = pivot.index.tz_localize(None)
-    # Resample to hourly
-    pivot = pivot.resample("h").mean()
-    return pivot
+    # Normalize each column to hourly naive UTC via shared helper
+    result = pd.DataFrame({
+        col: resample_to_hourly(pivot[col])
+        for col in pivot.columns
+    })
 
+    # PHS: split net value into production and consumption (both positive)
+    if "phs" in result.columns:
+        result["phs_prod"] = result["phs"].clip(lower=0).fillna(0)
+        result["phs_cons"] = (-result["phs"]).clip(lower=0).fillna(0)
+        result = result.drop(columns=["phs"])
+    else:
+        result["phs_prod"] = 0.0
+        result["phs_cons"] = 0.0
 
-def fetch_nmd(start, end):
-    """Fetch NMD (non-market-dependent) generation total for GB, in MW.
+    result.index.name = "hour"
+    return result.reset_index()
 
-    NMD for GB includes Biomass and Other (matching the ENTSO-E NMD definition).
-
-    Returns:
-        pd.Series indexed by hourly UTC timestamps, values in MW.
-    """
-    gen = fetch_generation(start, end)
-    if gen.empty:
-        return pd.Series(dtype=float)
-
-    nmd_cols = [c for c in gen.columns if c in {"biomass", "other"}]
-    if not nmd_cols:
-        return pd.Series(0, index=gen.index)
-    return gen[nmd_cols].sum(axis=1)
 
 
 def fetch_generation_for_fuel(start, end, fuel):
@@ -217,9 +256,9 @@ def fetch_generation_for_fuel(start, end, fuel):
         pd.Series indexed by hourly UTC timestamps, values in MW.
     """
     gen = fetch_generation(start, end)
-    if gen.empty or fuel not in gen.columns:
+    if gen is None or fuel not in gen.columns:
         return pd.Series(dtype=float)
-    return gen[fuel]
+    return gen.set_index("hour")[fuel]
 
 
 # ── Day-ahead prices ────────────────────────────────────────────────────────
@@ -276,5 +315,5 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
         if not apx.empty:
             df = apx
 
-    prices = _to_hourly_mean(df, value_col="price")
+    prices = _to_hourly_utc(df, value_col="price")
     return prices * gbp_to_eur

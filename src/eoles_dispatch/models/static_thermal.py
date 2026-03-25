@@ -73,9 +73,10 @@ def build_model(run_dir):
 
     str_vOM = pd.read_csv(input_dir / "str_vOM.csv", header=None, names=["str", "str_vOM"]).set_index("str").squeeze(axis=1)
 
-    months_hours = pd.read_csv(input_dir / "hour_month.csv", header=None, names=["hour", "month"]).set_index("month").squeeze(axis=1)
-    hours_months = pd.read_csv(input_dir / "hour_month.csv", header=None, names=["hour", "month"]).set_index("hour").squeeze(axis=1)
-    hours_weeks = pd.read_csv(input_dir / "hour_week.csv", header=None, names=["hour", "week"]).set_index("hour").squeeze(axis=1)
+    _hm_df = pd.read_csv(input_dir / "hour_month.csv", header=None, names=["hour", "month"])
+    months_hours = _hm_df.groupby("month")["hour"].apply(list).to_dict()  # {month: [h1, h2, ...]}
+    hours_months = _hm_df.set_index("hour")["month"].to_dict()            # {hour: month}
+    hours_weeks = pd.read_csv(input_dir / "hour_week.csv", header=None, names=["hour", "week"]).set_index("hour")["week"].to_dict()
 
     # ── Sets ────────────────────────────────────────────────────────────
 

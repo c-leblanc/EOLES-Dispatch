@@ -1,40 +1,133 @@
 """Load and format input data for the EOLES-Dispatch model.
 
-Reads time-varying data (demand, VRE profiles, hydro, nuclear) and scenario
-parameters from an Excel file, then saves formatted CSVs to a run directory.
+Reads year-based intermediate data from data/<year>/, computes derived
+variables (capacity factors, nuclear availability, lake inflows, hydro limits)
+from raw production history, and formats everything for the Pyomo model.
+
+The key design principle: collected data is *raw* (harmonized but not
+transformed). All derived computations happen here at run creation time,
+using scenario parameters (e.g. installed capacity) when needed.
 """
 
-import os
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from .config import NMD_TYPES
+from .utils import (
+    CET,
+    cet_month_bounds,
+    cet_to_utc,
+    cet_year_bounds,
+    compute_hour_mappings,
+    hour_to_cet_month,
+    hour_to_cet_week,
+)
 
-def load_time_varying_var(data_dir, variable, areas, start, end):
-    """Load a single time-varying variable from CSV, filter by date and areas."""
-    csv_path = data_dir / "time_varying_inputs" / f"{variable}.csv"
+
+# ── Data loading from year-based storage ──
+
+
+def load_year_production(data_dir, year, areas):
+    """Load raw production data for all areas from data/<year>/production_<area>.csv.
+
+    Args:
+        data_dir: Path to the data/ directory.
+        year: The simulation year.
+        areas: List of area codes.
+
+    Returns:
+        dict {area: pd.DataFrame} with columns ['hour', fuel1, fuel2, ...].
+        Values in MW. 'hour' is a UTC tz-naive datetime.
+    """
+    year_dir = Path(data_dir) / str(year)
+    if not year_dir.exists():
+        raise FileNotFoundError(
+            f"Data for year {year} not found at {year_dir}. "
+            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
+        )
+
+    result = {}
+    for area in areas:
+        prod_path = year_dir / f"production_{area}.csv"
+        if not prod_path.exists():
+            raise FileNotFoundError(
+                f"Production data for {area} not found at {prod_path}. "
+                f"Re-run 'eoles-dispatch collect --start {year} --end {year + 1}'."
+            )
+        df = pd.read_csv(prod_path)
+        df["hour"] = pd.to_datetime(df["hour"])
+        result[area] = df
+
+    return result
+
+
+def _load_year_csv(data_dir, year, filename, areas_or_exo):
+    """Load a year-based CSV file (demand.csv or exo_prices.csv).
+
+    Args:
+        data_dir: Path to the data/ directory.
+        year: The simulation year.
+        filename: CSV filename (e.g. "demand.csv").
+        areas_or_exo: List of area columns to extract.
+
+    Returns:
+        pd.DataFrame with columns ['hour', area1, area2, ...].
+        'hour' is a UTC tz-naive datetime.
+    """
+    year_dir = Path(data_dir) / str(year)
+    csv_path = year_dir / filename
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"{filename} not found at {csv_path}. "
+            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
+        )
     df = pd.read_csv(csv_path)
     df["hour"] = pd.to_datetime(df["hour"])
-    df = df[(df["hour"] >= start) & (df["hour"] < end)]
-    if df.empty:
-        available_min = pd.read_csv(csv_path, usecols=["hour"], nrows=1)["hour"].iloc[0]
-        available_max = pd.read_csv(csv_path, usecols=["hour"]).iloc[-1]["hour"]
-        raise ValueError(
-            f"No data for '{variable}' in the requested period "
-            f"{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}. "
-            f"Available data covers {available_min} to {available_max}. "
-            f"Run 'eoles-dispatch collect' to download data for this period."
-        )
-    df["hour"] = (df["hour"] - datetime(1970, 1, 1)).dt.total_seconds() / 3600
-    df["hour"] = df["hour"].astype(int)
-    melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
+    return df
+
+
+def _to_posix_hours(dt_series):
+    """Convert a datetime Series to POSIX hours (int, hours since 1970-01-01 UTC)."""
+    return ((dt_series - datetime(1970, 1, 1)).dt.total_seconds() / 3600).astype(int)
+
+
+def _melt_hourly(df, areas, start, end):
+    """Filter a wide DataFrame to [start, end), convert to POSIX hours, melt to long format.
+
+    Args:
+        df: DataFrame with 'hour' (datetime) and area columns.
+        areas: List of area codes to include.
+        start, end: Naive UTC datetimes for filtering.
+
+    Returns:
+        DataFrame with columns ['area', 'hour', 'value'].
+    """
+    df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+    df["hour"] = _to_posix_hours(df["hour"])
+    available_areas = [a for a in areas if a in df.columns]
+    melted = pd.melt(df, id_vars=["hour"], value_vars=available_areas,
+                     var_name="area", value_name="value")
     return melted[["area", "hour", "value"]]
 
 
 def load_ninja_var(data_dir, variable, areas, start, end):
-    """Load a Renewable Ninja capacity factor variable."""
-    csv_path = data_dir / "renewable_ninja" / f"{variable}.csv"
+    """Load a Renewable Ninja capacity factor variable.
+
+    Reads from data/renewable_ninja/<variable>.csv and filters to the
+    requested period and areas.
+
+    Returns:
+        DataFrame with columns ['area', 'hour', 'value'] (POSIX hours).
+    """
+    csv_path = Path(data_dir) / "renewable_ninja" / f"{variable}.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"Renewable Ninja data not found at {csv_path}. "
+            f"Run 'eoles-dispatch collect --source ninja' to download."
+        )
     df = pd.read_csv(csv_path)
     df["hour"] = pd.to_datetime(df["hour"])
     df = df[(df["hour"] >= start) & (df["hour"] < end)]
@@ -45,43 +138,375 @@ def load_ninja_var(data_dir, variable, areas, start, end):
             f"No data for '{variable}' in the requested period "
             f"{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}. "
             f"Available data covers {available_min} to {available_max}. "
-            f"Run 'eoles-dispatch collect' to download data for this period."
+            f"Run 'eoles-dispatch collect --source ninja' to download data."
         )
-    df["hour"] = (df["hour"] - datetime(1970, 1, 1)).dt.total_seconds() / 3600
-    df["hour"] = df["hour"].astype(int)
-    melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
+    df["hour"] = _to_posix_hours(df["hour"])
+    melted = pd.melt(df, id_vars=["hour"], value_vars=areas,
+                     var_name="area", value_name="value")
     return melted[["area", "hour", "value"]]
 
 
-def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horizon="current", months=None):
-    """Load all time-varying inputs and return them as a dict of DataFrames/lists.
+# ── Derived variable computations (from raw production data) ──
+
+
+def compute_nmd(production, areas, start, end):
+    """Compute NMD (non-market-dependent) production from raw generation data.
+
+    NMD = sum of biomass, geothermal, marine, other_renew, waste, other.
 
     Args:
-        months: Tuple (start_month, end_month) e.g. (1,3) for Jan-Mar,
-                (8,8) for August only. None = full year.
+        production: dict {area: DataFrame} from load_year_production.
+        areas: List of area codes.
+        start, end: Naive UTC datetimes.
+
+    Returns:
+        DataFrame with columns ['area', 'hour', 'value'] in GW.
     """
+    frames = {}
+    for area in areas:
+        if area not in production:
+            continue
+        df = production[area]
+        df_filtered = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+        nmd_cols = [c for c in NMD_TYPES if c in df_filtered.columns]
+        if nmd_cols:
+            nmd_series = df_filtered[nmd_cols].sum(axis=1) / 1000  # MW → GW
+        else:
+            nmd_series = pd.Series(0, index=df_filtered.index)
+        frames[area] = pd.DataFrame({
+            "hour": _to_posix_hours(df_filtered["hour"]),
+            "value": nmd_series.values,
+        })
+        frames[area]["area"] = area
+
+    if not frames:
+        return pd.DataFrame(columns=["area", "hour", "value"])
+
+    result = pd.concat(frames.values(), ignore_index=True)
+    return result[["area", "hour", "value"]]
+
+
+def compute_vre_capacity_factors(production, scenario_capa, areas, start, end,
+                                  technologies=None):
+    """Compute VRE capacity factors from raw production and scenario capacity.
+
+    CF = hourly_production (MW) / installed_capacity (GW * 1000), clipped to [0, 1].
+
+    Args:
+        production: dict {area: DataFrame} from load_year_production.
+        scenario_capa: DataFrame with columns ['area', 'tec', 'value'] (GW).
+        areas: List of area codes.
+        start, end: Naive UTC datetimes.
+        technologies: List of VRE tech names (default: offshore, onshore, pv, river).
+
+    Returns:
+        DataFrame with columns ['area', 'tec', 'hour', 'value'].
+    """
+    if technologies is None:
+        technologies = ["offshore", "onshore", "pv", "river"]
+
+    frames = []
+    for tec in technologies:
+        for area in areas:
+            if area not in production:
+                continue
+            df = production[area]
+            if tec not in df.columns:
+                continue
+
+            df_filtered = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+            prod_mw = df_filtered[tec].values
+
+            # Get installed capacity from scenario (GW → MW)
+            capa_row = scenario_capa[
+                (scenario_capa["area"] == area) & (scenario_capa["tec"] == tec)
+            ]
+            if not capa_row.empty:
+                capa_mw = float(capa_row["value"].iloc[0]) * 1000  # GW → MW
+            else:
+                # Fallback: use max observed production
+                capa_mw = prod_mw.max() if prod_mw.max() > 0 else 1
+
+            cf = np.clip(prod_mw / max(capa_mw, 1), 0, 1)
+
+            frame = pd.DataFrame({
+                "area": area,
+                "tec": tec,
+                "hour": _to_posix_hours(df_filtered["hour"]),
+                "value": cf,
+            })
+            frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(columns=["area", "tec", "hour", "value"])
+
+    return pd.concat(frames, ignore_index=True)[["area", "tec", "hour", "value"]]
+
+
+def compute_nuclear_max_af(production, scenario_capa, areas, hour_week):
+    """Compute weekly max nuclear availability factor from raw production.
+
+    AF = hourly_production / installed_capacity, clipped to [0, 1].
+    Weekly max = max AF within each week.
+
+    Args:
+        production: dict {area: DataFrame} from load_year_production.
+        scenario_capa: DataFrame with columns ['area', 'tec', 'value'] (GW).
+        areas: List of area codes.
+        hour_week: DataFrame with columns ['hour', 'week'] (POSIX hours → YYWW).
+
+    Returns:
+        DataFrame with columns ['area', 'week', 'value'].
+    """
+    frames = []
+    weeks = hour_week["week"].unique().tolist()
+
+    for area in areas:
+        if area not in production:
+            # No nuclear data → full availability
+            for w in weeks:
+                frames.append({"area": area, "week": w, "value": 1.0})
+            continue
+
+        df = production[area]
+        if "nuclear" not in df.columns:
+            for w in weeks:
+                frames.append({"area": area, "week": w, "value": 1.0})
+            continue
+
+        # Merge production with week mapping
+        prod_hours = pd.DataFrame({
+            "hour": _to_posix_hours(df["hour"]),
+            "nuclear": df["nuclear"].values,
+        })
+        merged = prod_hours.merge(hour_week, on="hour", how="inner")
+
+        # Get installed nuclear capacity (GW → MW)
+        capa_row = scenario_capa[
+            (scenario_capa["area"] == area) & (scenario_capa["tec"] == "nuclear")
+        ]
+        if not capa_row.empty:
+            capa_mw = float(capa_row["value"].iloc[0]) * 1000
+        else:
+            capa_mw = merged["nuclear"].max() if merged["nuclear"].max() > 0 else 1
+
+        merged["af"] = np.clip(merged["nuclear"] / max(capa_mw, 1), 0, 1)
+
+        # Weekly max
+        weekly = merged.groupby("week")["af"].max().reset_index()
+        weekly["area"] = area
+        weekly = weekly.rename(columns={"af": "value"})
+        frames.append(weekly[["area", "week", "value"]])
+
+    if not frames:
+        return pd.DataFrame(columns=["area", "week", "value"])
+
+    # frames can be list of dicts or DataFrames
+    result_parts = []
+    for f in frames:
+        if isinstance(f, dict):
+            result_parts.append(pd.DataFrame([f]))
+        else:
+            result_parts.append(f)
+    return pd.concat(result_parts, ignore_index=True)[["area", "week", "value"]]
+
+
+def compute_lake_inflows(production, areas, hour_month, eta_phs=0.855):
+    """Compute monthly lake inflows from raw production data.
+
+    lake_inflows = lake_prod + phs_prod - η * phs_cons, summed monthly, in TWh.
+
+    Args:
+        production: dict {area: DataFrame} from load_year_production.
+        areas: List of area codes.
+        hour_month: DataFrame with columns ['hour', 'month'] (POSIX hours → YYYYMM).
+        eta_phs: PHS round-trip efficiency (default: 0.9 * 0.95 = 0.855).
+
+    Returns:
+        DataFrame with columns ['area', 'month', 'value'] in TWh.
+    """
+    frames = []
+
+    for area in areas:
+        if area not in production:
+            continue
+        df = production[area]
+        prod_hours = pd.DataFrame({"hour": _to_posix_hours(df["hour"])})
+
+        # Lake production
+        if "lake" in df.columns:
+            prod_hours["lake"] = df["lake"].values
+        else:
+            prod_hours["lake"] = 0.0
+
+        # PHS prod/cons
+        if "phs_prod" in df.columns:
+            prod_hours["phs_prod"] = df["phs_prod"].values
+        else:
+            prod_hours["phs_prod"] = 0.0
+
+        if "phs_cons" in df.columns:
+            prod_hours["phs_cons"] = df["phs_cons"].values
+        else:
+            prod_hours["phs_cons"] = 0.0
+
+        # Net inflow = lake_prod + phs_prod - η * phs_cons
+        prod_hours["inflow_mw"] = (
+            prod_hours["lake"] + prod_hours["phs_prod"] - eta_phs * prod_hours["phs_cons"]
+        )
+
+        # Merge with month mapping and aggregate
+        merged = prod_hours.merge(hour_month, on="hour", how="inner")
+        monthly = merged.groupby("month")["inflow_mw"].sum().reset_index()
+        monthly["value"] = monthly["inflow_mw"].clip(lower=0) / 1e6  # MWh → TWh
+        monthly["area"] = area
+        frames.append(monthly[["area", "month", "value"]])
+
+    if not frames:
+        return pd.DataFrame(columns=["area", "month", "value"])
+
+    return pd.concat(frames, ignore_index=True)[["area", "month", "value"]]
+
+
+def compute_hydro_limits(production, areas, hour_month):
+    """Compute monthly max hydro charge/discharge from raw production.
+
+    hMaxOut = monthly max of (lake_prod + phs_prod), in GW.
+    hMaxIn  = monthly max of phs_cons, in GW.
+
+    Args:
+        production: dict {area: DataFrame} from load_year_production.
+        areas: List of area codes.
+        hour_month: DataFrame with columns ['hour', 'month'].
+
+    Returns:
+        (hMaxIn, hMaxOut) DataFrames with columns ['area', 'month', 'value'] in GW.
+    """
+    frames_in = []
+    frames_out = []
+
+    for area in areas:
+        if area not in production:
+            continue
+        df = production[area]
+        prod_hours = pd.DataFrame({"hour": _to_posix_hours(df["hour"])})
+
+        # Discharge: lake + PHS production
+        lake_prod = df["lake"].values if "lake" in df.columns else np.zeros(len(df))
+        phs_prod = df["phs_prod"].values if "phs_prod" in df.columns else np.zeros(len(df))
+        prod_hours["out_mw"] = np.clip(lake_prod + phs_prod, 0, None)
+
+        # Charge: PHS consumption
+        phs_cons = df["phs_cons"].values if "phs_cons" in df.columns else np.zeros(len(df))
+        prod_hours["in_mw"] = np.clip(phs_cons, 0, None)
+
+        # Merge with month mapping and get monthly max
+        merged = prod_hours.merge(hour_month, on="hour", how="inner")
+
+        monthly_out = merged.groupby("month")["out_mw"].max().reset_index()
+        monthly_out["value"] = monthly_out["out_mw"] / 1000  # MW → GW
+        monthly_out["area"] = area
+        frames_out.append(monthly_out[["area", "month", "value"]])
+
+        monthly_in = merged.groupby("month")["in_mw"].max().reset_index()
+        monthly_in["value"] = monthly_in["in_mw"] / 1000  # MW → GW
+        monthly_in["area"] = area
+        frames_in.append(monthly_in[["area", "month", "value"]])
+
+    def _combine(frames):
+        if not frames:
+            return pd.DataFrame(columns=["area", "month", "value"])
+        return pd.concat(frames, ignore_index=True)[["area", "month", "value"]]
+
+    return _combine(frames_in), _combine(frames_out)
+
+
+# ── Main entry point: load all time-varying inputs ──
+
+
+def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
+                   actCF=False, rn_horizon="current", months=None,
+                   scenario_capa=None):
+    """Load all time-varying inputs from year-based data and compute derived variables.
+
+    This is the main data loading function called at run creation time.
+
+    Flow:
+        1. Compute UTC boundaries from CET calendar
+        2. Load raw production, demand, exo_prices from data/<year>/
+        3. Load Ninja profiles from data/renewable_ninja/ (if not actCF)
+        4. Compute hour_month and hour_week mappings
+        5. Compute NMD from raw production
+        6. Compute VRE capacity factors (from production if actCF, else from Ninja)
+        7. Compute nucMaxAF, lake_inflows, hMaxIn, hMaxOut from raw production
+        8. Return the same dict format as before (compatible with save_inputs + models)
+
+    Args:
+        data_dir: Path to the data/ directory.
+        simul_year: Simulation year.
+        areas: List of modeled country codes.
+        exo_areas: List of non-modeled country codes.
+        actCF: Use actual historical capacity factors instead of Renewable Ninja.
+        rn_horizon: Renewables.ninja wind fleet ("current" or "future").
+        months: Optional (start_month, end_month) tuple.
+        scenario_capa: DataFrame with columns ['area', 'tec', 'value'] (GW).
+            Required for computing CFs and nuclear AF from production data.
+
+    Returns:
+        Dict with keys: demand, nmd, exoPrices, vre_profiles, hour_month,
+        hour_week, lake_inflows, hMaxIn, hMaxOut, nucMaxAF, hours, weeks, months.
+    """
+    data_dir = Path(data_dir)
+
+    # 1. Compute UTC boundaries
     if months:
         start_m, end_m = months
-        start = datetime(simul_year, start_m, 1)
+        start = cet_to_utc(datetime(simul_year, start_m, 1))
         if end_m < 12:
-            end = datetime(simul_year, end_m + 1, 1)
+            end = cet_to_utc(datetime(simul_year, end_m + 1, 1))
         else:
-            end = datetime(simul_year + 1, 1, 1)
+            end = cet_to_utc(datetime(simul_year + 1, 1, 1))
     else:
-        start = datetime(simul_year, 1, 1)
-        end = datetime(simul_year + 1, 1, 1)
+        start, end = cet_year_bounds(simul_year)
 
-    demand = load_time_varying_var(data_dir, "demand", areas, start, end)
-    nmd = load_time_varying_var(data_dir, "nmd", areas, start, end)
-    exoPrices = load_time_varying_var(data_dir, "exoPrices", exo_areas, start, end)
+    # 2. Load raw data from year-based storage
+    production = load_year_production(data_dir, simul_year, areas)
+    demand_raw = _load_year_csv(data_dir, simul_year, "demand.csv", areas)
+    exo_prices_raw = _load_year_csv(data_dir, simul_year, "exo_prices.csv", exo_areas)
 
-    # VRE production profiles
+    # 3. Format demand and exo prices (MW → GW for demand, prices stay EUR/MWh)
+    demand_filtered = demand_raw[(demand_raw["hour"] >= start) & (demand_raw["hour"] < end)].copy()
+    demand_filtered["hour"] = _to_posix_hours(demand_filtered["hour"])
+    area_cols_demand = [c for c in areas if c in demand_filtered.columns]
+    demand_filtered[area_cols_demand] = demand_filtered[area_cols_demand] / 1000  # MW → GW
+    demand = pd.melt(demand_filtered, id_vars=["hour"], value_vars=area_cols_demand,
+                     var_name="area", value_name="value")[["area", "hour", "value"]]
+
+    exo_filtered = exo_prices_raw[(exo_prices_raw["hour"] >= start) & (exo_prices_raw["hour"] < end)].copy()
+    exo_filtered["hour"] = _to_posix_hours(exo_filtered["hour"])
+    exo_cols = [c for c in exo_areas if c in exo_filtered.columns]
+    exoPrices = pd.melt(exo_filtered, id_vars=["hour"], value_vars=exo_cols,
+                        var_name="area", value_name="value")[["area", "hour", "value"]]
+
+    # 4. Hour-month and hour-week mappings
+    hour_month, hour_week = compute_hour_mappings(simul_year, months)
+
+    # 5. Compute NMD from production
+    nmd = compute_nmd(production, areas, start, end)
+
+    # 6. VRE capacity factors
     vre_profiles = pd.DataFrame()
     if actCF:
-        for tec in ["offshore", "onshore", "pv"]:
-            temp = load_time_varying_var(data_dir, tec, areas, start, end)
-            temp["tec"] = tec
-            vre_profiles = pd.concat([vre_profiles, temp[["area", "tec", "hour", "value"]]])
+        if scenario_capa is None:
+            raise ValueError(
+                "scenario_capa is required when actCF=True "
+                "(needed to compute capacity factors from production data)"
+            )
+        vre_cf = compute_vre_capacity_factors(
+            production, scenario_capa, areas, start, end,
+            technologies=["offshore", "onshore", "pv"],
+        )
+        vre_profiles = vre_cf
     else:
         offshore = load_ninja_var(data_dir, f"offshore_{rn_horizon}", areas, start, end)
         onshore = load_ninja_var(data_dir, f"onshore_{rn_horizon}", areas, start, end)
@@ -95,51 +520,52 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horiz
             pv[["area", "tec", "hour", "value"]],
         ])
 
-    river = load_time_varying_var(data_dir, "river", areas, start, end)
-    river["tec"] = "river"
-    vre_profiles = pd.concat([vre_profiles, river[["area", "tec", "hour", "value"]]])
+    # River CF (always from production data, since Ninja doesn't have it)
+    if scenario_capa is not None:
+        river_cf = compute_vre_capacity_factors(
+            production, scenario_capa, areas, start, end,
+            technologies=["river"],
+        )
+    else:
+        # Fallback: use production/max as CF proxy
+        river_cf = compute_vre_capacity_factors(
+            production, pd.DataFrame(columns=["area", "tec", "value"]),
+            areas, start, end, technologies=["river"],
+        )
+    vre_profiles = pd.concat([vre_profiles, river_cf])
 
-    # Hour-month and hour-week mappings
-    hour_month = pd.DataFrame({"hour": demand["hour"].unique()})
-    hour_month["hour_POSIX"] = pd.to_datetime(hour_month["hour"] * 3600, unit="s", origin="1970-01-01", utc=True)
-    hour_month["month"] = hour_month["hour_POSIX"].dt.strftime("%Y%m").astype(str)
-    hour_month = hour_month[["hour", "month"]]
+    # 7. Derived monthly/weekly variables from production
+    if scenario_capa is not None:
+        nucMaxAF = compute_nuclear_max_af(production, scenario_capa, areas, hour_week)
+    else:
+        # No scenario capacity → assume full availability
+        weeks_list = hour_week["week"].unique().tolist()
+        nuc_rows = [{"area": a, "week": w, "value": 1.0}
+                    for a in areas for w in weeks_list]
+        nucMaxAF = pd.DataFrame(nuc_rows)
 
-    hour_week = pd.DataFrame({"hour": demand["hour"].unique()})
-    hour_week["hour_POSIX"] = pd.to_datetime(hour_week["hour"] * 3600, unit="s", origin="1970-01-01", utc=True)
-    hour_week["week"] = hour_week["hour_POSIX"].dt.strftime("%Y%W").astype(str)
-    hour_week = hour_week[["hour", "week"]]
+    lake_inflows = compute_lake_inflows(production, areas, hour_month)
+    hMaxIn, hMaxOut = compute_hydro_limits(production, areas, hour_month)
 
-    # Monthly data
-    tv_dir = data_dir / "time_varying_inputs"
+    # Ensure all areas are present in monthly/weekly data (fill missing with defaults)
+    all_months = sorted(hour_month["month"].unique().tolist())
+    all_weeks = sorted(hour_week["week"].unique().tolist())
 
-    lake_inflows = pd.read_csv(tv_dir / "lake_inflows.csv", dtype={"month": str})
-    lake_inflows = lake_inflows[["month"] + areas]
-    lake_inflows = pd.melt(lake_inflows, id_vars="month", var_name="area", value_name="value")
-    lake_inflows = lake_inflows[lake_inflows["month"].isin(hour_month["month"])]
-    lake_inflows = lake_inflows[["area", "month", "value"]]
-
-    hMaxIn = pd.read_csv(tv_dir / "hMaxIn.csv", dtype={"month": str})
-    hMaxIn = hMaxIn[["month"] + areas]
-    hMaxIn = pd.melt(hMaxIn, id_vars="month", var_name="area", value_name="value")
-    hMaxIn = hMaxIn[hMaxIn["month"].isin(hour_month["month"])]
-    hMaxIn = hMaxIn[["area", "month", "value"]]
-
-    hMaxOut = pd.read_csv(tv_dir / "hMaxOut.csv", dtype={"month": str})
-    hMaxOut = hMaxOut[["month"] + areas]
-    hMaxOut = pd.melt(hMaxOut, id_vars="month", var_name="area", value_name="value")
-    hMaxOut = hMaxOut[hMaxOut["month"].isin(hour_month["month"])]
-    hMaxOut = hMaxOut[["area", "month", "value"]]
-
-    nucMaxAF = pd.read_csv(tv_dir / "nucMaxAF.csv", dtype={"week": str})
-    nucMaxAF = nucMaxAF[["week"] + areas]
-    nucMaxAF = pd.melt(nucMaxAF, id_vars="week", var_name="area", value_name="value")
-    nucMaxAF = nucMaxAF[nucMaxAF["week"].isin(hour_week["week"])]
-    nucMaxAF = nucMaxAF[["area", "week", "value"]]
+    for a in areas:
+        if a not in lake_inflows["area"].values:
+            filler = pd.DataFrame({"area": a, "month": all_months, "value": 0.0})
+            lake_inflows = pd.concat([lake_inflows, filler], ignore_index=True)
+        if a not in hMaxIn["area"].values:
+            filler = pd.DataFrame({"area": a, "month": all_months, "value": 0.0})
+            hMaxIn = pd.concat([hMaxIn, filler], ignore_index=True)
+            hMaxOut = pd.concat([hMaxOut, filler], ignore_index=True)
+        if a not in nucMaxAF["area"].values:
+            filler = pd.DataFrame({"area": a, "week": all_weeks, "value": 1.0})
+            nucMaxAF = pd.concat([nucMaxAF, filler], ignore_index=True)
 
     hours = hour_month["hour"].unique().tolist()
-    weeks = hour_week["week"].unique().tolist()
-    months = hour_month["month"].unique().tolist()
+    weeks = all_weeks
+    months_list = all_months
 
     return {
         "demand": demand,
@@ -154,8 +580,11 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas, actCF=False, rn_horiz
         "nucMaxAF": nucMaxAF,
         "hours": hours,
         "weeks": weeks,
-        "months": months,
+        "months": months_list,
     }
+
+
+# ── Scenario loading ──
 
 
 def _read_scenario_table(scenario_path, name, **kwargs):
@@ -221,12 +650,19 @@ def extract_scenario(scenario_path, areas, exo_areas, hour_month):
     exo_IM = pd.melt(_read_scenario_table(scenario_path, "exo_IM"), id_vars="importer", var_name="exporter")
     exo_IM = exo_IM[(exo_IM["importer"].isin(areas)) & (exo_IM["exporter"].isin(exo_areas))]
 
-    # Fuel price correction factors
-    fuel_timeFactor = pd.melt(
-        _read_scenario_table(scenario_path, "fuel_timeFactor", dtype={"month": str}),
+    # Fuel price seasonal weights (calendar months 1-12, mean=1 per fuel).
+    # Expand to YYYYMM strings matching the simulation period.
+    fuel_timeFactor_raw = pd.melt(
+        _read_scenario_table(scenario_path, "fuel_timeFactor"),
         id_vars="month", var_name="fuel",
     )
-    fuel_timeFactor = fuel_timeFactor[fuel_timeFactor.month.isin(hour_month["month"])][["fuel", "month", "value"]]
+    sim_months = hour_month["month"].unique()
+    sim_months_df = pd.DataFrame({
+        "yyyymm": sim_months,
+        "month": [int(m[-2:]) for m in sim_months],
+    })
+    fuel_timeFactor = fuel_timeFactor_raw.merge(sim_months_df, on="month", how="inner")
+    fuel_timeFactor = fuel_timeFactor[["fuel", "yyyymm", "value"]].rename(columns={"yyyymm": "month"})
 
     fuel_areaFactor = pd.melt(
         _read_scenario_table(scenario_path, "fuel_areaFactor"),
@@ -311,24 +747,3 @@ def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
     # Save area lists
     pd.DataFrame(areas).to_csv(input_dir / "areas.csv", index=False, header=False)
     pd.DataFrame(exo_areas).to_csv(input_dir / "exo_areas.csv", index=False, header=False)
-
-
-def prepare_run(run_dir, data_dir, scenario_path, year, areas, exo_areas,
-                actCF=False, rn_horizon="current"):
-    """Full pipeline: load data, extract scenario, save formatted inputs.
-
-    Args:
-        run_dir: Path to the run directory (e.g. runs/my_run)
-        data_dir: Path to the data directory containing time_varying_inputs/ and renewable_ninja/
-        scenario_path: Path to a scenario directory (CSVs) or Excel file (.xlsx)
-        year: Simulation year (2016-2019)
-        areas: List of modeled country codes
-        exo_areas: List of non-modeled country codes
-        actCF: Use actual historical capacity factors instead of Renewable Ninja
-        rn_horizon: Renewables.ninja wind fleet ("current" or "future")
-    """
-    data_dir = Path(data_dir)
-    tv_data = load_tv_inputs(data_dir, year, areas, exo_areas, actCF, rn_horizon)
-    scenario_data = extract_scenario(scenario_path, areas, exo_areas, tv_data["hour_month"])
-    save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)
-    return tv_data, scenario_data
