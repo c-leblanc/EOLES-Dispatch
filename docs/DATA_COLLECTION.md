@@ -1,4 +1,4 @@
-# Data collection and preparation — EOLES-Dispatch
+# EOLES-Dispatch - Data collection and preparation
 
 This document describes the full pipeline for collecting, cleaning, and
 formatting the input data required by the EOLES-Dispatch model. The
