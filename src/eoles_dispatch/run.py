@@ -21,6 +21,50 @@ import yaml
 from .config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
 
+def _copy_actual_prices(data_dir, run_dir, year, areas, months):
+    """Copy historical day-ahead prices into runs/<name>/validation/.
+
+    Reads actual_prices.csv from the year data directory, filters to the
+    requested areas and time period, converts timestamps to POSIX hours
+    (matching outputs/prices.csv format), and saves into validation/.
+
+    Silently skips if actual_prices.csv does not exist.
+    """
+    import pandas as pd
+    from datetime import datetime
+    from .utils import cet_year_bounds, cet_to_utc
+
+    src = data_dir / str(year) / "actual_prices.csv"
+    if not src.exists():
+        return
+
+    df = pd.read_csv(src, parse_dates=["hour"])
+
+    # Filter to requested time period
+    if months:
+        start_m, end_m = months
+        start = cet_to_utc(datetime(year, start_m, 1))
+        if end_m < 12:
+            end = cet_to_utc(datetime(year, end_m + 1, 1))
+        else:
+            end = cet_to_utc(datetime(year + 1, 1, 1))
+    else:
+        start, end = cet_year_bounds(year)
+
+    df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+
+    # Convert hour to POSIX hours (int)
+    df["hour"] = ((df["hour"] - pd.Timestamp("1970-01-01")).dt.total_seconds() / 3600).astype(int)
+
+    # Keep only requested areas
+    cols = ["hour"] + [a for a in areas if a in df.columns]
+    df = df[cols]
+
+    validation_dir = run_dir / "validation"
+    validation_dir.mkdir(exist_ok=True)
+    df.to_csv(validation_dir / "actual_prices.csv", index=False)
+
+
 def _ensure_data_available(data_dir, year, areas, exo_areas):
     """Check if data for the given year is available, download if not.
 
@@ -158,6 +202,9 @@ def create_run(
 
     print("  Saving formatted inputs...")
     save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)
+
+    # Copy historical prices for validation (if available)
+    _copy_actual_prices(data_dir, run_dir, year, areas, months)
 
     # Copy scenario into run directory for reproducibility
     scenario_copy_dir = run_dir / "scenario"

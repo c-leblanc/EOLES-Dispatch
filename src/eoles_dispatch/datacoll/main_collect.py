@@ -169,6 +169,12 @@ def collect_all(
             exo_prices.to_csv(partial_dir / "exo_prices.csv", index=False)
             logger.info(f"  → exoPrices.csv ({len(exo_prices)} rows)")
 
+            # 5. Actual prices for modeled areas (validation, not model input)
+            logger.info(f"=== Actual prices (modeled areas) ===")
+            actual_prices = collect_actual_prices(client, areas, start, end, gap_report, canon_idx)
+            actual_prices.to_csv(partial_dir / "actual_prices.csv", index=False)
+            logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
+
             # Save gap-fill report in the year directory
             gap_report.save(partial_dir)
 
@@ -373,6 +379,43 @@ def collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx):
     return df.reset_index()
 
 
+# ── Actual prices (modeled areas, for validation) ──
+
+def collect_actual_prices(client, areas, start, end, gap_report, canon_idx):
+    """Collect day-ahead prices for modeled areas, in EUR/MWh.
+
+    These prices are NOT used as model inputs — they serve as a reference
+    for comparing simulated prices against observed market outcomes.
+    Stored separately from exo_prices.csv to maintain a clean separation.
+
+    Args:
+        client: EntsoePandasClient.
+        areas: List of modeled area codes (e.g. FR, BE, DE, ...).
+        start, end: Period bounds (naive UTC).
+        gap_report: Report instance for gap-filling audit trail.
+        canon_idx: DatetimeIndex from canonical_index(year).
+
+    Returns a DataFrame with columns ['hour', area1, area2, ...].
+    """
+    frames = {}
+    for area in areas:
+        logger.info(f"Downloading actual prices for {area}")
+        try:
+            prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
+            if prices is None:
+                logger.warning(f"No actual price data returned for {area}")
+                continue
+            prices = prices.reindex(canon_idx)
+            prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="actual_price", area=area)
+            frames[area] = prices
+        except Exception as e:
+            logger.warning(f"Failed to download actual prices for {area}: {e}")
+            continue
+
+    df = pd.DataFrame(frames)
+    df.index.name = "hour"
+    return df.reset_index()
+
 
 
 # ── Year-based validation ──
@@ -437,7 +480,18 @@ def _validate_year(year_dir, year, areas, exo_areas):
                 n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
                 issues.append(f"production_{area}.csv: {n_nan} NaN values remain")
 
-    return len(issues) == 0, issues
+    # Check actual_prices.csv (soft validation — warnings only, does not block)
+    actual_path = year_dir / "actual_prices.csv"
+    if not actual_path.exists():
+        logger.warning("actual_prices.csv missing (validation data, not critical)")
+    else:
+        df = pd.read_csv(actual_path)
+        if len(df) != n_expected:
+            logger.warning(f"actual_prices.csv: {len(df)} rows, expected {n_expected}")
+        missing_areas = set(areas) - (set(df.columns) - {"hour"})
+        if missing_areas:
+            logger.warning(f"actual_prices.csv: missing areas {missing_areas}")
 
+    return len(issues) == 0, issues
 
 

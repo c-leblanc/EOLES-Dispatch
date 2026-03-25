@@ -81,6 +81,8 @@ def main():
     viz_parser.add_argument("name", nargs="+", help="Run name(s)")
     viz_parser.add_argument("--no-open", action="store_true",
                             help="Don't open the report in the browser")
+    viz_parser.add_argument("--validate", action="store_true",
+                            help="Compare simulated prices against historical day-ahead prices")
     _add_project_dir(viz_parser)
 
     # --- convert-scenario command ---
@@ -160,7 +162,7 @@ def main():
             if not run_dir.exists():
                 print(f"Run '{run_name}' not found at {run_dir}")
                 continue
-            out = generate_report(run_dir, open_browser=not args.no_open)
+            out = generate_report(run_dir, open_browser=not args.no_open, validate=args.validate)
             print(f"Report: {out}")
 
     elif args.command == "convert-scenario":
