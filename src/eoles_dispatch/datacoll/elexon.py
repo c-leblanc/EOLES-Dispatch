@@ -317,3 +317,38 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
 
     prices = _to_hourly_utc(df, value_col="price")
     return prices * gbp_to_eur
+
+
+# ── Installed capacity ─────────────────────────────────────────────────────
+
+def fetch_installed_capacity(year):
+    """Fetch installed generation capacity per fuel type for GB, in MW.
+
+    Uses the /datasets/IGCPU endpoint (B1420 — Installed Generation Capacity
+    Per Unit) and sums by PSR type.
+
+    Args:
+        year: Calendar year (int).
+
+    Returns:
+        dict {fuel_type: mw} using our internal fuel names, or None on failure.
+    """
+    data = _fetch_json("/datasets/IGCPU", {
+        "publishDateTimeFrom": f"{year}-01-01T00:00:00Z",
+        "publishDateTimeTo": f"{year + 1}-01-01T00:00:00Z",
+    })
+    if data is None or "data" not in data or not data["data"]:
+        logger.warning("Elexon installed capacity unavailable for year %d", year)
+        return None
+
+    # Sum installedCapacity by psrType, map to our internal names
+    capa_by_fuel = {}
+    for rec in data["data"]:
+        our_name = PSR_MAP.get(rec.get("psrType", ""))
+        if our_name is None:
+            continue
+        mw = rec.get("installedCapacity") or 0
+        if mw > 0:
+            capa_by_fuel[our_name] = capa_by_fuel.get(our_name, 0) + mw
+
+    return capa_by_fuel if capa_by_fuel else None

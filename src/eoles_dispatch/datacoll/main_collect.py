@@ -26,6 +26,7 @@ Data structure:
     data/<year>/
         production_<area>.csv   - hourly generation by fuel type (MW)
         demand.csv              - hourly demand per area (MW)
+        installed_capacity.csv  - installed capacity: technologies in rows, areas in columns (MW)
         exo_prices.csv          - hourly day-ahead prices for exo areas (EUR/MWh)
         gap_fill_report.csv/txt - gap-filling audit trail
     data/renewable_ninja/
@@ -45,6 +46,12 @@ Functions:
     collect_production(client, areas, start, end, gap_report)
         Download hourly generation by fuel type per area (MW). ENTSO-E
         primary, Elexon fallback for UK. PHS split into phs_prod/phs_cons.
+        Called from collect_all.
+
+    collect_installed_capacity(client, areas, year, out_dir)
+        Download installed generation capacity (MW). Saves wide-format CSV
+        with technologies in rows and areas in columns.
+        ENTSO-E primary, Elexon fallback for UK. Static yearly data.
         Called from collect_all.
 
     collect_exo_prices(client, exo_areas, start, end, gap_report)
@@ -162,6 +169,10 @@ def collect_all(
             for area, prod_df in production.items():
                 prod_df.to_csv(partial_dir / f"production_{area}.csv", index=False)
                 logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} fuel types)")
+
+            # 3. Installed capacity per area
+            logger.info(f"=== Installed capacity ===")
+            collect_installed_capacity(client, areas, year, partial_dir)
 
             # 4. Exogenous prices
             logger.info(f"=== Exogenous prices ===")
@@ -339,6 +350,55 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
             result[area] = indexed.reset_index()
 
     return result
+
+
+# ── Installed capacity ──
+
+def collect_installed_capacity(client, areas, year, out_dir):
+    """Collect installed generation capacity per fuel type for each area.
+
+    ENTSO-E primary, Elexon fallback for UK. Saves installed_capacity.csv
+    in wide format: technologies in rows, areas in columns (MW).
+
+    Args:
+        client: EntsoePandasClient.
+        areas: List of area codes.
+        year: Calendar year.
+        out_dir: Path to write installed_capacity.csv.
+    """
+    rows = []
+    for area in areas:
+        capa = None
+
+        # Try ENTSO-E
+        try:
+            capa = entsoe.fetch_installed_capacity(client, area, year)
+            if capa:
+                logger.info(f"  {area}: installed capacity from ENTSO-E ({len(capa)} fuel types)")
+        except Exception as e:
+            if area != "UK":
+                logger.warning(f"  Failed to fetch installed capacity for {area}: {e}")
+
+        # Elexon fallback for UK
+        if not capa and area == "UK":
+            try:
+                capa = elexon.fetch_installed_capacity(year)
+                if capa:
+                    logger.info(f"  {area}: installed capacity from Elexon ({len(capa)} fuel types)")
+            except Exception as e:
+                logger.warning(f"  Elexon fallback also failed for {area} installed capacity: {e}")
+
+        if capa:
+            for tec, mw in capa.items():
+                rows.append({"area": area, "tec": tec, "value": mw})
+        else:
+            logger.warning(f"  No installed capacity data for {area}")
+
+    long = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["area", "tec", "value"])
+    df = long.pivot(index="tec", columns="area", values="value").fillna(0)
+    df.columns.name = None  # drop "area" header above column names
+    df.to_csv(out_dir / "installed_capacity.csv")
+    logger.info(f"  → installed_capacity.csv ({len(df)} technologies, {len(df.columns)} areas)")
 
 
 # ── Exogenous prices ──

@@ -1,0 +1,49 @@
+"""Data loading helpers for viz: CSV/YAML readers and color lookups."""
+
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+from ._theme import COUNTRY_COLORS, TEC_COLORS, AGG_COLORS
+
+
+def _posix_hours_to_dt(hours_series):
+    return pd.to_datetime(hours_series * 3600, unit="s", origin="unix", utc=True)
+
+
+def _load_hourly(run_dir, filename, col_names):
+    path = run_dir / "inputs" / filename
+    if not path.exists():
+        return None
+    df = pd.read_csv(path, header=None, names=col_names)
+    if "hour" in df.columns:
+        df["datetime"] = _posix_hours_to_dt(df["hour"])
+    return df
+
+
+def _load_actual_prices(run_dir):
+    """Load historical day-ahead prices from validation/ directory, if available."""
+    path = run_dir / "validation" / "actual_prices.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "hour" in df.columns:
+        df["datetime"] = _posix_hours_to_dt(df["hour"])
+    return df
+
+
+def _load_metadata(run_dir):
+    meta_path = run_dir / "run.yaml"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+def _country_color(area, idx=0):
+    return COUNTRY_COLORS.get(area, f"hsl({(idx * 51) % 360}, 70%, 50%)")
+
+
+def _tec_color(tec):
+    return TEC_COLORS.get(tec, AGG_COLORS.get(tec, "#888888"))

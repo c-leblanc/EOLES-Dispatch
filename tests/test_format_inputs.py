@@ -7,15 +7,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings
-from eoles_dispatch.format_inputs import (
+from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings, to_posix_hours
+from eoles_dispatch.inputs.compute import (
     compute_nmd,
     compute_vre_capacity_factors,
     compute_nuclear_max_af,
     compute_lake_inflows,
     compute_hydro_limits,
-    load_ninja_var,
 )
+from eoles_dispatch.inputs.format_inputs import load_ninja_var
 
 
 # ---------------------------------------------------------------------------
@@ -56,15 +56,21 @@ class TestCetToUtc:
 
 
 def _make_production(areas, n_hours=24, fuels=None):
-    """Create a mock production dict for testing compute_* functions."""
+    """Create a mock production dict for testing compute_* functions.
+
+    Returns production with 'hour' as POSIX hours (int), matching the
+    pre-filtered format expected by all compute_* functions.
+    """
     if fuels is None:
         fuels = ["biomass", "gas", "nuclear", "solar", "onshore", "offshore",
                  "river", "lake", "phs_prod", "phs_cons", "geothermal",
                  "marine", "other_renew", "waste", "other"]
     result = {}
     rng = np.random.default_rng(42)
+    hours_dt = pd.date_range("2021-01-01", periods=n_hours, freq="h")
+    hours_posix = to_posix_hours(hours_dt.to_series())
     for area in areas:
-        data = {"hour": pd.date_range("2021-01-01", periods=n_hours, freq="h")}
+        data = {"hour": hours_posix.values}
         for fuel in fuels:
             data[fuel] = rng.uniform(0, 1000, n_hours)
         result[area] = pd.DataFrame(data)
@@ -75,9 +81,7 @@ class TestComputeNmd:
     def test_nmd_sums_correct_fuels(self):
         """NMD should be the sum of biomass, geothermal, marine, other_renew, waste, other."""
         production = _make_production(["FR"], n_hours=4)
-        start = datetime(2021, 1, 1)
-        end = datetime(2021, 1, 1, 4)
-        nmd = compute_nmd(production, ["FR"], start, end)
+        nmd = compute_nmd(production, ["FR"])
 
         # Compute expected NMD manually
         df = production["FR"]
@@ -89,9 +93,7 @@ class TestComputeNmd:
 
     def test_nmd_output_columns(self):
         production = _make_production(["FR", "DE"], n_hours=2)
-        start = datetime(2021, 1, 1)
-        end = datetime(2021, 1, 1, 2)
-        nmd = compute_nmd(production, ["FR", "DE"], start, end)
+        nmd = compute_nmd(production, ["FR", "DE"])
         assert list(nmd.columns) == ["area", "hour", "value"]
 
 
@@ -105,13 +107,11 @@ class TestComputeVreCapacityFactors:
         """Capacity factors must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=24)
         capa = pd.DataFrame({
-            "area": ["FR", "FR", "FR", "FR"],
-            "tec": ["offshore", "onshore", "pv", "river"],
-            "value": [1.0, 1.0, 1.0, 0.5],  # GW
+            "area": ["FR", "FR", "FR"],
+            "tec": ["offshore", "onshore", "pv"],
+            "value": [1.0, 1.0, 1.0],  # GW
         })
-        start = datetime(2021, 1, 1)
-        end = datetime(2021, 1, 2)
-        cf = compute_vre_capacity_factors(production, capa, ["FR"], start, end)
+        cf = compute_vre_capacity_factors(production, capa, ["FR"])
         assert cf["value"].min() >= 0.0
         assert cf["value"].max() <= 1.0
 
@@ -120,11 +120,24 @@ class TestComputeVreCapacityFactors:
         capa = pd.DataFrame({
             "area": ["FR"], "tec": ["onshore"], "value": [1.0],
         })
-        start = datetime(2021, 1, 1)
-        end = datetime(2021, 1, 1, 2)
-        cf = compute_vre_capacity_factors(production, capa, ["FR"], start, end,
+        cf = compute_vre_capacity_factors(production, capa, ["FR"],
                                            technologies=["onshore"])
         assert list(cf.columns) == ["area", "tec", "hour", "value"]
+
+
+class TestComputeRiverCf:
+    def test_river_cf_bounded_zero_one(self):
+        """River capacity factors must be in [0, 1]."""
+        production = _make_production(["FR"], n_hours=24)
+        cf = compute_river_cf(production, ["FR"])
+        assert cf["value"].min() >= 0.0
+        assert cf["value"].max() <= 1.0
+
+    def test_river_cf_peaks_at_one(self):
+        """River CF should peak at 1.0 (normalized by max production)."""
+        production = _make_production(["FR"], n_hours=24)
+        cf = compute_river_cf(production, ["FR"])
+        assert cf["value"].max() == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

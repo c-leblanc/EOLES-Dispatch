@@ -166,7 +166,7 @@ def main():
             print(f"Report: {out}")
 
     elif args.command == "convert-scenario":
-        from .format_inputs import xlsx_to_scenario
+        from .inputs.scenario import xlsx_to_scenario
         xlsx_to_scenario(args.xlsx_path, args.output_dir)
 
     else:

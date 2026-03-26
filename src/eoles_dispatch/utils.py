@@ -17,8 +17,7 @@ Used by:
     - datacoll/entsoe.py        (resample_to_hourly)
     - datacoll/elexon.py        (resample_to_hourly)
     - datacoll/main_collect.py  (cet_year_bounds, expected_hours, canonical_index)
-    - format_inputs.py          (cet_year_bounds, cet_month_bounds, cet_to_utc,
-                                 compute_hour_mappings, hour_to_cet_month, hour_to_cet_week)
+    - format_inputs.py          (to_posix_hours, compute_hour_mappings)
     - run.py                    (compute_hour_mappings)
 
 Functions:
@@ -29,8 +28,6 @@ Functions:
                                               Called from main_collect.collect_all.
     cet_year_bounds(year)                   - UTC bounds of a CET calendar year.
                                               Called from main_collect.collect_all, format_inputs.
-    cet_month_bounds(year, month)           - UTC bounds of a CET calendar month.
-                                              Called from format_inputs.
     cet_week_bounds(year, week)             - UTC bounds of an ISO week in CET.
     expected_hours(year)                    - Number of hours in a CET year.
                                               Called from main_collect (collect_production, _validate_year).
@@ -131,21 +128,6 @@ def cet_year_bounds(year):
     return start, end
 
 
-def cet_month_bounds(year, month):
-    """Return (utc_start, utc_end) for a CET calendar month.
-
-    Example:
-        cet_month_bounds(2021, 3) → March 2021 in CET, converted to UTC bounds
-        i.e. (2021-02-28 23:00, 2021-03-31 22:00)  # March starts in CET, ends in CEST
-    """
-    start = cet_to_utc(datetime(year, month, 1))
-    if month < 12:
-        end = cet_to_utc(datetime(year, month + 1, 1))
-    else:
-        end = cet_to_utc(datetime(year + 1, 1, 1))
-    return start, end
-
-
 def cet_week_bounds(year, week):
     """Return (utc_start, utc_end) for an ISO week in CET.
 
@@ -161,6 +143,13 @@ def cet_week_bounds(year, week):
     start = cet_to_utc(monday)
     end = cet_to_utc(next_monday)
     return start, end
+
+
+# Conversions
+
+def to_posix_hours(dt_series):
+    """Convert a datetime Series to POSIX hours (int, hours since 1970-01-01 UTC)."""
+    return ((dt_series - datetime(1970, 1, 1)).dt.total_seconds() / 3600).astype(int)
 
 
 # Mappings

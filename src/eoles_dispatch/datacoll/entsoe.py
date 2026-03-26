@@ -390,3 +390,49 @@ def fetch_generation(client, area, start, end):
     df.index.name = "hour"
     return df.reset_index()
 
+
+# ── Installed generation capacity ──
+
+def fetch_installed_capacity(client, area, year):
+    """Fetch installed generation capacity per fuel type for a year, in MW.
+
+    Uses query_installed_generation_capacity (ENTSO-E 14.1.A) which returns
+    a DataFrame with PSR-type columns and yearly/monthly snapshots as rows.
+    We take the max over the year to get the peak installed capacity.
+
+    Args:
+        client: EntsoePandasClient.
+        area: Our area code (e.g. 'FR', 'DE').
+        year: Calendar year (int).
+
+    Returns:
+        dict {fuel_type: mw} using our internal fuel names, or None on failure.
+    """
+    start = pd.Timestamp(year=year, month=1, day=1)
+    end = pd.Timestamp(year=year, month=12, day=31)
+    periods = _resolve_area(area, start, end)
+    parts = []
+    for code, p_start, p_end in periods:
+        api_start, api_end = _to_api_timestamps(p_start, p_end)
+        try:
+            raw = client.query_installed_generation_capacity(
+                code, start=api_start, end=api_end
+            )
+        except Exception as e:
+            logger.warning("Installed capacity unavailable for %s: %s", area, e)
+            return None
+        if isinstance(raw, pd.DataFrame) and not raw.empty:
+            parts.append(raw)
+    if not parts:
+        return None
+
+    snapshot = pd.concat(parts).max()  # peak over year
+    result = {}
+    for fuel_type in ENTSOE_COL_NAMES:
+        cols = [c for c in snapshot.index if col_matches(c, fuel_type)]
+        if cols:
+            val = snapshot[cols].sum()
+            if val > 0:
+                result[fuel_type] = val
+    return result if result else None
+

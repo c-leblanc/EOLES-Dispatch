@@ -185,7 +185,8 @@ def create_run(
 
     # Format and save inputs
     # New flow: scenario first (needs hour_month), then tv_data (needs scenario_capa)
-    from .format_inputs import load_tv_inputs, extract_scenario, save_inputs
+    from .inputs.format_inputs import load_tv_inputs, save_inputs
+    from .inputs.scenario import extract_scenario
     from .utils import compute_hour_mappings
 
     print("  Computing time mappings...")
@@ -196,8 +197,9 @@ def create_run(
 
     print("  Loading time-varying data and computing derived variables...")
     tv_data = load_tv_inputs(
-        data_dir, year, areas, exo_areas, actCF, rn_horizon,
-        months=months, scenario_capa=scenario_data["capa"],
+        data_dir, year, areas, exo_areas,
+        hour_month, hour_week,
+        actCF=actCF, rn_horizon=rn_horizon,
     )
 
     print("  Saving formatted inputs...")
