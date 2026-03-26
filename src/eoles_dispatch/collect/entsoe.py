@@ -44,10 +44,6 @@ Internal helpers:
         Convert naive UTC to tz-aware CET for entsoe-py.
     col_matches(col, fuel_type)
         Match an ENTSO-E column name to our internal fuel type key.
-    area_code(area)
-        Map our area code to an entsoe-py bidding zone code (static, current default).
-    area_code_price(area)
-        Map our area code to an entsoe-py price zone code (static).
     _resolve_area(area, start, end)
         Time-dependent area resolution (handles DE_AT_LU → DE_LU transition).
     _resolve_area_price(area, start, end)
@@ -196,21 +192,6 @@ def col_matches(col, fuel_type):
         if name in col_str:
             return True
     return False
-
-def area_code(area):
-    """Map our area code to an entsoe-py country code string for load/generation."""
-    code = AREA_CODES.get(area)
-    if code is None:
-        raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
-    return code
-
-
-def area_code_price(area):
-    """Map our area code to an entsoe-py code for day-ahead prices.
-
-    Some areas need a different code for prices (e.g. IT → IT_NORD).
-    """
-    return AREA_CODES_PRICE.get(area, area_code(area))
 
 
 # Germany switched from DE_AT_LU to DE_LU bidding zone on 1 October 2018.

@@ -8,6 +8,6 @@ Usage:
     eoles-dispatch viz run1 run2  # compare two runs
 """
 
-from ._report import generate_report
+from .report import generate_report
 
 __all__ = ["generate_report"]

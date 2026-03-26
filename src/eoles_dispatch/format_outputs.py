@@ -1,9 +1,12 @@
 """Extract and format model results into CSV files."""
 
 import datetime
+import logging
 import os
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -149,10 +152,7 @@ def report_production(model, run_dir):
 def report_capa_on(model, run_dir):
     """Extract hourly online thermal capacity by technology and area."""
     if not hasattr(model, "on"):
-        import logging
-        logging.getLogger(__name__).warning(
-            "report_capa_on skipped: model has no 'on' variable (static_thermal model)"
-        )
+        logger.warning("report_capa_on skipped: model has no 'on' variable (static_thermal model)")
         return
 
     output_dir = _ensure_output_dir(run_dir)

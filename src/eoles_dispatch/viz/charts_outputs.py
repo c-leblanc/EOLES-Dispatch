@@ -5,8 +5,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ._theme import TEC_AGGREGATION, AGG_COLORS, AGG_ORDER_POS, AGG_ORDER_NEG, _apply_theme
-from ._loaders import _posix_hours_to_dt, _load_actual_prices, _country_color
+from .theme import TEC_AGGREGATION, AGG_COLORS, AGG_ORDER_POS, AGG_ORDER_NEG, _apply_theme
+from .loaders import _posix_hours_to_dt, _load_actual_prices, _country_color
 
 
 def chart_prices(run_dir, areas):

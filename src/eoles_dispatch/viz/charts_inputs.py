@@ -4,8 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ._theme import TEC_AGGREGATION, AGG_COLORS, AGG_ORDER, _apply_theme
-from ._loaders import _load_hourly, _country_color
+from .theme import TEC_AGGREGATION, AGG_COLORS, AGG_ORDER, _apply_theme
+from .loaders import _load_hourly, _country_color
 
 
 def chart_demand(run_dir, areas):

@@ -96,23 +96,6 @@ def collect_all(
     source="all",
     force=False,
 ):
-    """Download all time-varying data and save to CSV files, organized by year.
-
-    For each year in [start_year, end_year):
-        1. Download into a temporary data/<year>_partial/ directory
-        2. Validate completeness (expected hours, no NaN)
-        3. If valid: rename to data/<year>/
-        4. If invalid: rename to data/<year>_corrupt/
-
-    Args:
-        output_dir: Path to data/ directory.
-        start_year: First year to download (e.g. 2020).
-        end_year: Last year to download, exclusive (e.g. 2025 to get 2020-2024).
-        areas: Modeled country codes (default: FR, BE, DE, CH, IT, ES, UK).
-        exo_areas: Non-modeled country codes for price data.
-        source: "all", "entsoe", or "ninja".
-        force: Re-download even if year data already exists.
-    """
     if areas is None:
         areas = list(DEFAULT_AREAS)
     if exo_areas is None:
@@ -121,8 +104,9 @@ def collect_all(
     output_dir = Path(output_dir)
 
     if source in ("all", "entsoe"):
+        logger.info("=== STARTING DOWNLOADING HISTORY DATA ===")
         # Validate API key upfront (fail fast before starting a long run)
-        logger.info("=== Validating ENTSO-E API key ===")
+        logger.info("Validating ENTSO-E API key")
         client = entsoe.set_client()
 
         for year in range(start_year, end_year):
@@ -130,84 +114,133 @@ def collect_all(
             corrupt_dir = output_dir / f"{year}_corrupt"
             partial_dir = output_dir / f"{year}_partial"
 
-            # Skip if already valid (unless force)
-            if year_dir.exists() and not force:
-                logger.info(f"=== {year}: data already exists, skipping (use --force to re-download) ===")
-                continue
-
-            logger.info(f"=== Collecting data for {year} ===")
-
-            # Clean up any previous partial/corrupt directories
-            if partial_dir.exists():
-                shutil.rmtree(partial_dir)
-            if force and year_dir.exists():
+            # Skip if already valid (unless force) or clean up any previous partial/corrupt directories
+            if year_dir.exists() and force:
+                logger.info(f"Data for {year} present locally, force removing and redownloading...")
                 shutil.rmtree(year_dir)
-            if force and corrupt_dir.exists():
+            elif year_dir.exists():
+                logger.info(f"Data for {year} already available locally, skipping (use --force to re-download)")
+                continue
+            elif partial_dir.exists():
+                logger.info(f"Data for {year} present locally is partial: removing and redownloading...")
+                shutil.rmtree(partial_dir)
+            elif corrupt_dir.exists():
+                logger.info(f"Data for {year} present locally is corrupt: removing and redownloading...")
                 shutil.rmtree(corrupt_dir)
+            else:
+                logger.info(f"No data for {year}: downloading...")
 
+            # Launch download of history data for <year>
             partial_dir.mkdir(parents=True)
-
-            # Initialize gap-fill report for this year
-            gap_report = Report()
-
-            # CET year bounds (naive UTC — entsoe module handles tz conversion)
-            start, end = cet_year_bounds(year)
-            canon_idx = canonical_index(year)
-
-            # 1. Demand (collect_demand returns GW, store as MW for raw data)
-            logger.info(f"=== Demand ===")
-            demand = collect_demand(client, areas, start, end, gap_report, canon_idx)
-            demand_mw = demand.copy()
-            area_cols = [c for c in demand_mw.columns if c != "hour"]
-            demand_mw[area_cols] = demand_mw[area_cols] * 1000  # GW → MW
-            demand_mw.to_csv(partial_dir / "demand.csv", index=False)
-            logger.info(f"  → demand.csv ({len(demand_mw)} rows)")
-
-            # 2. Raw production per area
-            logger.info(f"=== Production ===")
-            production = collect_production(client, areas, start, end, gap_report, canon_idx)
-            for area, prod_df in production.items():
-                prod_df.to_csv(partial_dir / f"production_{area}.csv", index=False)
-                logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} fuel types)")
-
-            # 3. Installed capacity per area
-            logger.info(f"=== Installed capacity ===")
-            collect_installed_capacity(client, areas, year, partial_dir)
-
-            # 4. Exogenous prices
-            logger.info(f"=== Exogenous prices ===")
-            exo_prices = collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx)
-            exo_prices.to_csv(partial_dir / "exo_prices.csv", index=False)
-            logger.info(f"  → exoPrices.csv ({len(exo_prices)} rows)")
-
-            # 5. Actual prices for modeled areas (validation, not model input)
-            logger.info(f"=== Actual prices (modeled areas) ===")
-            actual_prices = collect_actual_prices(client, areas, start, end, gap_report, canon_idx)
-            actual_prices.to_csv(partial_dir / "actual_prices.csv", index=False)
-            logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
-
-            # Save gap-fill report in the year directory
-            gap_report.save(partial_dir)
-
-            # Validate and finalize
+            collect_history(output_dir=partial_dir, client=client, year=year, areas=areas, exo_areas=exo_areas)
+            
+            # Validate history data for <year>
             is_valid, issues = _validate_year(partial_dir, year, areas, exo_areas)
             if is_valid:
                 partial_dir.rename(year_dir)
-                logger.info(f"  === {year}: validated and saved to {year_dir} ===")
+                logger.info(f"{year}: validated and saved to {year_dir}")
             else:
                 target = output_dir / f"{year}_corrupt"
                 partial_dir.rename(target)
-                logger.warning(f"  === {year}: VALIDATION FAILED, marked as corrupt ===")
+                logger.warning(f"{year}: VALIDATION FAILED, marked as corrupt")
                 for issue in issues:
                     logger.warning(f"    - {issue}")
 
     if source in ("all", "ninja"):
         ninja_dir = output_dir / "renewable_ninja"
+        ninja_files = ["solar.csv", "onshore_current.csv", "onshore_future.csv", "offshore_current.csv", "offshore_future.csv"]
+        ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
+
         logger.info("=== Collecting Renewables.ninja profiles ===")
-        collect_ninja(ninja_dir, areas)
+
+        if ninja_missing:
+            logger.info(f"Renewable Ninja data not found in {ninja_dir}, downloading...")
+            collect_ninja(ninja_dir, areas=areas)
+        elif force:
+            logger.info("Renewable Ninja data already available locally, force remove and redownload...")
+            shutil.rmtree(ninja_dir)
+            collect_ninja(ninja_dir, areas=areas)
+        else:
+            logger.info("Renewable Ninja data already available locally, skipping download.")
+
+        # Verify download succeeded
+        still_missing = [f for f in ninja_files if not (ninja_dir / f).exists()]
+        if still_missing:
+            raise RuntimeError(
+                f"Failed to download Renewables.ninja data. "
+                f"Missing files: {still_missing}. "
+                f"Check your internet connection, or provide the data manually in {ninja_dir}/"
+            )
 
     logger.info("=== Collection complete ===")
     return output_dir
+
+
+# ── Collection of full history data for 1 year ──
+
+def collect_history(
+    output_dir,
+    client,
+    year,
+    areas=None,
+    exo_areas=None,
+):
+    """Download all time-varying ENTSO-E data for a single year and save to CSV.
+
+    Fetches demand, generation by fuel type, installed capacity, exogenous
+    prices, and actual prices for modeled areas. Writes directly into
+    output_dir — does not create partial/corrupt directories (that lifecycle
+    is managed by collect_all).
+
+    Args:
+        output_dir: Directory to write CSV files into (e.g. data/<year>_partial/).
+        client: EntsoePandasClient (created by entsoe.set_client()).
+        year: Calendar year to download.
+        areas: Modeled country codes (default: DEFAULT_AREAS).
+        exo_areas: Non-modeled country codes for price data (default: DEFAULT_EXO_AREAS).
+    """
+    # Initialize gap-fill report for this year
+    gap_report = Report()
+
+    # CET year bounds (naive UTC — entsoe module handles tz conversion)
+    start, end = cet_year_bounds(year)
+    canon_idx = canonical_index(year)
+
+    # 1. Demand (collect_demand returns GW, store as MW for raw data)
+    logger.info(f"=== Demand ===")
+    demand = collect_demand(client, areas, start, end, gap_report, canon_idx)
+    demand_mw = demand.copy()
+    area_cols = [c for c in demand_mw.columns if c != "hour"]
+    demand_mw[area_cols] = demand_mw[area_cols] * 1000  # GW → MW
+    demand_mw.to_csv(output_dir / "demand.csv", index=False)
+    logger.info(f"  → demand.csv ({len(demand_mw)} rows)")
+
+    # 2. Raw production per area
+    logger.info(f"=== Production ===")
+    production = collect_production(client, areas, start, end, gap_report, canon_idx)
+    for area, prod_df in production.items():
+        prod_df.to_csv(output_dir / f"production_{area}.csv", index=False)
+        logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} fuel types)")
+
+    # 3. Installed capacity per area
+    logger.info(f"=== Installed capacity ===")
+    collect_installed_capacity(client, areas, year, output_dir)
+
+    # 4. Exogenous prices
+    logger.info(f"=== Exogenous prices ===")
+    exo_prices = collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx)
+    exo_prices.to_csv(output_dir / "exo_prices.csv", index=False)
+    logger.info(f"  → exoPrices.csv ({len(exo_prices)} rows)")
+
+    # 5. Actual prices for modeled areas (validation, not model input)
+    logger.info(f"=== Actual prices (modeled areas) ===")
+    actual_prices = collect_actual_prices(client, areas, start, end, gap_report, canon_idx)
+    actual_prices.to_csv(output_dir / "actual_prices.csv", index=False)
+    logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
+
+    # Save gap-fill report in the year directory
+    gap_report.save(output_dir)
+
 
 
 # ── Demand ──

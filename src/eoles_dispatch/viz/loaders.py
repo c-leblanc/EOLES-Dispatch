@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from ._theme import COUNTRY_COLORS, TEC_COLORS, AGG_COLORS
+from .theme import COUNTRY_COLORS, TEC_COLORS, AGG_COLORS
 
 
 def _posix_hours_to_dt(hours_series):

@@ -12,9 +12,9 @@ from eoles_dispatch.utils import (
     to_UTC_hourly,
     clip_to_range,
 )
-from eoles_dispatch.datacoll.entsoe import col_matches, ENTSOE_COL_NAMES, PRODUCTION_FUELS
-from eoles_dispatch.datacoll.entsoe import is_usable
-from eoles_dispatch.datacoll.gap_filling import interpolate_gaps, Report
+from eoles_dispatch.collect.entsoe import col_matches, ENTSOE_COL_NAMES, PRODUCTION_FUELS
+from eoles_dispatch.collect.entsoe import is_usable
+from eoles_dispatch.collect.gap_filling import interpolate_gaps, Report
 
 
 # ── col_matches ──

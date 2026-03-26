@@ -11,15 +11,17 @@ Directory structure:
         scenario/         - copy of the scenario used
 """
 
+import logging
 import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-
 import yaml
 
-from .config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
+from ..collect._main_collect import collect_all
+from ..config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
+logger = logging.getLogger(__name__)
 
 def _copy_actual_prices(data_dir, run_dir, year, areas, months):
     """Copy historical day-ahead prices into runs/<name>/validation/.
@@ -32,7 +34,7 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
     """
     import pandas as pd
     from datetime import datetime
-    from .utils import cet_year_bounds, cet_to_utc
+    from ..utils import cet_year_bounds, cet_to_utc
 
     src = data_dir / str(year) / "actual_prices.csv"
     if not src.exists():
@@ -72,25 +74,20 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
     If the year directory is missing, triggers a collect.
     If marked as corrupt (data/<year>_corrupt), raises an error.
     """
-    import logging
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    # Check history data
     year_dir = data_dir / str(year)
-    corrupt_dir = data_dir / f"{year}_corrupt"
+    history_missing = not year_dir.exists()
 
-    if corrupt_dir.exists():
-        raise RuntimeError(
-            f"Data for {year} is marked as corrupt ({corrupt_dir}). "
-            f"Delete the corrupt directory and re-run: "
-            f"eoles-dispatch collect --start {year} --end {year + 1} --force"
-        )
+    # Check Renewables.ninja data
+    ninja_dir = data_dir / "renewable_ninja"
+    ninja_files = ["solar.csv", "onshore_current.csv", "onshore_future.csv", "offshore_current.csv", "offshore_future.csv"]
+    ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
 
-    if not year_dir.exists():
-        print(f"Data for {year} not found, downloading from ENTSO-E...")
-        from .datacoll.main_collect import collect_all
-        collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="entsoe")
-
-        # Verify the collect succeeded
+    if history_missing or ninja_missing:
+        logger.info("Some necessary data is missing, launching data collection...")
+        collect_all(data_dir, year, year+1, areas=areas, exo_areas=exo_areas, source = "all")
+        # Verify history data download succeeded
         if not year_dir.exists():
             if (data_dir / f"{year}_corrupt").exists():
                 raise RuntimeError(
@@ -98,18 +95,7 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
                     f"Check {data_dir / f'{year}_corrupt'} for details."
                 )
             raise RuntimeError(f"Data collection for {year} did not produce {year_dir}.")
-
-    # Check Renewables.ninja data
-    ninja_dir = data_dir / "renewable_ninja"
-    ninja_files = ["solar.csv", "onshore_current.csv", "offshore_current.csv"]
-    ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
-
-    if ninja_missing:
-        print(f"Renewable Ninja data not found in {ninja_dir}, downloading...")
-        from .datacoll.rninja import collect_ninja
-        collect_ninja(ninja_dir, areas=areas)
-
-        # Verify download succeeded
+        # Verify ninja data download succeeded
         still_missing = [f for f in ninja_files if not (ninja_dir / f).exists()]
         if still_missing:
             raise RuntimeError(
@@ -117,6 +103,7 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
                 f"Missing files: {still_missing}. "
                 f"Check your internet connection, or provide the data manually in {ninja_dir}/"
             )
+        
 
 
 def create_run(
@@ -181,28 +168,28 @@ def create_run(
 
     # Create run directory
     run_dir.mkdir(parents=True)
-    print(f"Creating run '{name}'...")
+    logger.info(f"Creating run '{name}'...")
 
     # Format and save inputs
     # New flow: scenario first (needs hour_month), then tv_data (needs scenario_capa)
-    from .inputs.format_inputs import load_tv_inputs, save_inputs
-    from .inputs.scenario import extract_scenario
-    from .utils import compute_hour_mappings
+    from .format_inputs import load_tv_inputs, save_inputs
+    from .scenario import extract_scenario
+    from ..utils import compute_hour_mappings
 
-    print("  Computing time mappings...")
+    logger.info("  Computing time mappings...")
     hour_month, hour_week = compute_hour_mappings(year, months=months)
 
-    print("  Loading scenario parameters...")
+    logger.info("  Loading scenario parameters...")
     scenario_data = extract_scenario(scenario_path, areas, exo_areas, hour_month)
 
-    print("  Loading time-varying data and computing derived variables...")
+    logger.info("  Loading time-varying data and computing derived variables...")
     tv_data = load_tv_inputs(
         data_dir, year, areas, exo_areas,
         hour_month, hour_week,
         actCF=actCF, rn_horizon=rn_horizon,
     )
 
-    print("  Saving formatted inputs...")
+    logger.info("  Saving formatted inputs...")
     save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)
 
     # Copy historical prices for validation (if available)
@@ -234,7 +221,7 @@ def create_run(
     with open(run_dir / "run.yaml", "w") as f:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
-    print(f"  Run created at {run_dir}")
+    logger.info(f"  Run created at {run_dir}")
     return run_dir
 
 
@@ -262,8 +249,8 @@ def solve_run(
     import pyomo.environ  # noqa: F401 — registers solver plugins
     from pyomo.opt import SolverFactory
 
-    from .format_outputs import report_prices, report_production, report_capa_on, report_FRtrade, write_log
-    from .models import MODEL_REGISTRY
+    from ..format_outputs import report_prices, report_production, report_capa_on, report_FRtrade, write_log
+    from ..models import MODEL_REGISTRY
 
     if reports is None:
         reports = ["prices", "production"]
@@ -281,7 +268,7 @@ def solve_run(
     with open(meta_path) as f:
         metadata = yaml.safe_load(f)
 
-    print(f"Solving run '{name}' (scenario={metadata['scenario']}, year={metadata['year']})")
+    logger.info(f"Solving run '{name}' (scenario={metadata['scenario']}, year={metadata['year']})")
     start_time = time.localtime()
     start_monotonic = time.monotonic()
 
@@ -289,13 +276,13 @@ def solve_run(
     build_model = MODEL_REGISTRY.get(version)
     if build_model is None:
         raise ValueError(f"Unknown model version '{version}'. Choose from: {list(MODEL_REGISTRY.keys())}")
-    print(f"  Building model [{version}]...")
+    logger.info(f"  Building model [{version}]...")
     model = build_model(run_dir)
 
     # Solve
     # Pyomo uses "appsi_highs" as the SolverFactory name for HiGHS
     solver_name = "appsi_highs" if solver == "highs" else solver
-    print(f"  Solving with {solver}...")
+    logger.info(f"  Solving with {solver}...")
     opt = SolverFactory(solver_name)
 
     # HiGHS-specific tuning for large LP models
@@ -314,13 +301,13 @@ def solve_run(
             f"Termination condition: {tc}. Check model feasibility."
         )
     if tc == TerminationCondition.feasible:
-        print(f"  Warning: solver returned a feasible (but not proven optimal) solution.")
+        logger.warning("  Solver returned a feasible (but not proven optimal) solution.")
 
     # Create outputs directory
     (run_dir / "outputs").mkdir(exist_ok=True)
 
     # Generate reports
-    print("  Generating reports...")
+    logger.info("  Generating reports...")
     report_map = {
         "prices": report_prices,
         "production": report_production,
@@ -335,7 +322,7 @@ def solve_run(
     hours, remainder = divmod(elapsed_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     exec_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    print(f"  Done in {exec_str}")
+    logger.info(f"  Done in {exec_str}")
 
     # Update metadata
     metadata["status"] = "solved"

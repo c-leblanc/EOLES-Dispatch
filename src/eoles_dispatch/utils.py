@@ -25,12 +25,12 @@ Functions:
     resample_to_hourly(series)              - Resample to hourly naive UTC (mean).
                                               Called from entsoe, elexon.
     canonical_index(year)                   - Hourly DatetimeIndex for a CET year.
-                                              Called from main_collect.collect_all.
+                                              Called from _main_collect.
     cet_year_bounds(year)                   - UTC bounds of a CET calendar year.
-                                              Called from main_collect.collect_all, format_inputs.
+                                              Called from _main_collect, format_inputs.
     cet_week_bounds(year, week)             - UTC bounds of an ISO week in CET.
     expected_hours(year)                    - Number of hours in a CET year.
-                                              Called from main_collect (collect_production, _validate_year).
+                                              Called from _main_collect (collect_production, _validate_year).
     hour_to_cet_month(utc_posix_hours)      - Map POSIX hours to CET month strings.
                                               Called from format_inputs.
     hour_to_cet_week(utc_posix_hours)       - Map POSIX hours to CET week strings.
@@ -44,13 +44,8 @@ Deprecated (kept for backward compatibility):
 """
 
 from datetime import datetime
-
 import pandas as pd
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 
 # CET/CEST timezone used by ENTSO-E and the European electricity calendar.
 CET = ZoneInfo("Europe/Brussels")

@@ -3,13 +3,13 @@
 import webbrowser
 from pathlib import Path
 
-from ._loaders import _load_metadata
-from ._charts_inputs import (
+from .loaders import _load_metadata
+from .charts_inputs import (
     chart_demand, chart_vre_profiles, chart_nmd, chart_exo_prices,
     chart_nuclear_availability, chart_lake_inflows, chart_capacity_mix,
     chart_interconnections,
 )
-from ._charts_outputs import (
+from .charts_outputs import (
     chart_prices, html_price_overview,
     chart_prices_validate, html_price_overview_validate,
     chart_price_scatter, chart_production,

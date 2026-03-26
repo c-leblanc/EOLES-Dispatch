@@ -72,74 +72,6 @@ ENTSOE_MIN_COVERAGE = 0.5
 DEFAULT_AREAS = ["FR", "BE", "DE", "CH", "IT", "ES", "UK"] # Default modeled areas
 DEFAULT_EXO_AREAS = ["NL", "DK1", "DK2", "SE4", "PL", "CZ", "AT", "GR", "SI", "PT", "IE"] # Default exogenous (non-modeled) areas
 
-
-# ── Technology nomenclature mappings ──
-#
-# RAW_TO_AGG: raw (collected data) → agg (output/viz).
-#   Keys = column names in data/<year>/production_<area>.csv.
-#   Values = column names in runs/<name>/outputs/production.csv.
-#   Also used to derive NMD_TYPES for compute_nmd().
-#
-# MODEL_TO_AGG: model (LP technologies) → agg (output/viz).
-#   Keys = technology names from scenario CSVs (capa.csv, thr_specs.csv).
-#   Values = same agg namespace as RAW_TO_AGG.
-#   Used by format_outputs.py and viz/_theme.py.
-
-RAW_TO_AGG = {
-    # Renewables
-    "solar":        "solar",
-    "onshore":      "wind",
-    "offshore":     "wind",
-    "river":        "river",
-    "lake":         "lake_phs",
-    # Nuclear
-    "nuclear":      "nuclear",
-    # Thermal
-    "gas":          "gas",
-    "coal_gas":     "gas",
-    "hard_coal":    "coal",
-    "lignite":      "coal",
-    "oil":          "oil",
-    "oil_shale":    "oil",
-    "peat":         "nmd",
-    # NMD (non-market-dependent)
-    "biomass":      "nmd",
-    "geothermal":   "nmd",
-    "marine":       "nmd",
-    "other_renew":  "nmd",
-    "waste":        "nmd",
-    "other":        "nmd",
-    # Storage (hydro pumped storage)
-    "phs":          "lake_phs",
-    "phs_in":       "phs_in",       # negative at all levels
-}
-
-MODEL_TO_AGG = {
-    # Thermal sub-types
-    "gas_ccgt1G":   "gas",
-    "gas_ccgt2G":   "gas",
-    "gas_ccgtSA":   "gas",
-    "gas_ocgtSA":   "gas",
-    "coal_1G":      "coal",
-    "coal_SA":      "coal",
-    "lignite":      "coal",
-    "oil_light":    "oil",
-    # VRE
-    "onshore":      "wind",
-    "offshore":     "wind",
-    # Identity mappings (no sub-types)
-    "nuclear":      "nuclear",
-    "solar":        "solar",
-    "river":        "river",
-    "lake_phs":     "lake_phs",
-    "battery":      "battery",
-    "nmd":          "nmd",
-}
-
-# NMD fuel types, derived from RAW_TO_AGG (single source of truth).
-NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]
-
-
 AREA_CODES = { # Matching to ENTSOE area codes
     "FR": "FR",
     "BE": "BE",
@@ -186,6 +118,73 @@ AREA_CODES_PRICE = {
 # entsoe.py:_resolve_area_price().
 # IT prices use IT_NORD (the reference price zone), not IT (which has no price).
 
+
+
+#----------------------------------
+## Technology nomenclature mappings
+#----------------------------------
+
+# RAW_TO_AGG: raw (collected data) → agg (output/viz).
+#   Keys = column names in data/<year>/production_<area>.csv.
+#   Values = column names in runs/<name>/outputs/production.csv.
+#   Also used to derive NMD_TYPES for compute_nmd().
+RAW_TO_AGG = {
+    # Renewables
+    "solar":        "solar",
+    "onshore":      "wind",
+    "offshore":     "wind",
+    "river":        "river",
+    "lake":         "lake_phs",
+    # Nuclear
+    "nuclear":      "nuclear",
+    # Thermal
+    "gas":          "gas",
+    "coal_gas":     "gas",
+    "hard_coal":    "coal",
+    "lignite":      "coal",
+    "oil":          "oil",
+    "oil_shale":    "oil",
+    "peat":         "nmd",
+    # NMD (non-market-dependent)
+    "biomass":      "nmd",
+    "geothermal":   "nmd",
+    "marine":       "nmd",
+    "other_renew":  "nmd",
+    "waste":        "nmd",
+    "other":        "nmd",
+    # Storage (hydro pumped storage)
+    "phs":          "lake_phs",
+    "phs_in":       "phs_in",       # negative at all levels
+}
+
+# MODEL_TO_AGG: model (LP technologies) → agg (output/viz).
+#   Keys = technology names from scenario CSVs (capa.csv, thr_specs.csv).
+#   Values = same agg namespace as RAW_TO_AGG.
+#   Used by format_outputs.py and viz/_theme.py.
+MODEL_TO_AGG = {
+    # Thermal sub-types
+    "gas_ccgt1G":   "gas",
+    "gas_ccgt2G":   "gas",
+    "gas_ccgtSA":   "gas",
+    "gas_ocgtSA":   "gas",
+    "coal_1G":      "coal",
+    "coal_SA":      "coal",
+    "lignite":      "coal",
+    "oil_light":    "oil",
+    # VRE
+    "onshore":      "wind",
+    "offshore":     "wind",
+    # Identity mappings (no sub-types)
+    "nuclear":      "nuclear",
+    "solar":        "solar",
+    "river":        "river",
+    "lake_phs":     "lake_phs",
+    "battery":      "battery",
+    "nmd":          "nmd",
+}
+
+# NMD fuel types, derived from RAW_TO_AGG (single source of truth).
+NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]
 
 
 

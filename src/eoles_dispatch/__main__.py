@@ -10,12 +10,15 @@ Usage:
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 from . import __version__
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     parser = argparse.ArgumentParser(
         prog="eoles-dispatch",
         description="EOLES-Dispatch: Cost-minimization dispatch model for wholesale electricity prices",
@@ -95,7 +98,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "create":
-        from .run import create_run
+        from .run._main_run import create_run
         # Parse --months: "3" → (3,3), "1-3" → (1,3), None → None
         month_range = None
         if args.months:
@@ -121,7 +124,7 @@ def main():
         )
 
     elif args.command == "solve":
-        from .run import solve_run
+        from .run._main_run import solve_run
         solve_run(
             name=args.name,
             project_dir=args.project_dir,
@@ -131,7 +134,7 @@ def main():
         )
 
     elif args.command == "list":
-        from .run import list_runs
+        from .run._main_run import list_runs
         runs = list_runs(project_dir=args.project_dir)
         if not runs:
             print("No runs found.")
@@ -144,12 +147,10 @@ def main():
                       f"{r.get('created','?'):<20}")
 
     elif args.command == "collect":
-        import logging
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
         if args.end <= args.start:
             parser.error(f"--end ({args.end}) must be greater than --start ({args.start}). "
                          f"Note: --end is exclusive, so use --end {args.start + 1} to collect year {args.start}.")
-        from .datacoll.main_collect import collect_all
+        from .collect._main_collect import collect_all
         project_dir = args.project_dir or Path.cwd()
         output_dir = args.output_dir or project_dir / "data"
         collect_all(output_dir, args.start, args.end, source=args.source, force=args.force)
@@ -166,7 +167,7 @@ def main():
             print(f"Report: {out}")
 
     elif args.command == "convert-scenario":
-        from .inputs.scenario import xlsx_to_scenario
+        from .run.scenario import xlsx_to_scenario
         xlsx_to_scenario(args.xlsx_path, args.output_dir)
 
     else:
