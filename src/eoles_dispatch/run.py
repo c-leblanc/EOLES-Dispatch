@@ -101,7 +101,7 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
 
     # Check Renewables.ninja data
     ninja_dir = data_dir / "renewable_ninja"
-    ninja_files = ["pv.csv", "onshore_current.csv", "offshore_current.csv"]
+    ninja_files = ["solar.csv", "onshore_current.csv", "offshore_current.csv"]
     ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
 
     if ninja_missing:

@@ -1,6 +1,6 @@
 """Renewables.ninja capacity-factor profile downloads.
 
-Downloads PV and wind (onshore/offshore, current/future fleet) capacity
+Downloads solar and wind (onshore/offshore, current/future fleet) capacity
 factor time series from the public Renewables.ninja country downloads.
 These profiles are year-independent (long-term averages from MERRA-2
 reanalysis) and are saved once in data/renewable_ninja/.
@@ -65,7 +65,7 @@ NINJA_ISO2 = {
 #   - current: technology installed as of ~2020 (current hub heights, rotor diameters)
 #   - future:  projected next-generation turbines (taller towers, larger rotors)
 NINJA_FILES = {
-    "pv": "ninja-pv-country-{iso2}-national-merra2.csv",
+    "solar": "ninja-pv-country-{iso2}-national-merra2.csv",
     "onshore_current": "ninja-wind-country-{iso2}-current_onshore-merra2.csv",
     "onshore_future": "ninja-wind-country-{iso2}-future_onshore-merra2.csv",
     "offshore_current": "ninja-wind-country-{iso2}-current_offshore-merra2.csv",
@@ -110,7 +110,7 @@ def _download_ninja_csv(iso2, filename):
 def collect_ninja(output_dir, areas=None):
     """Download Renewables.ninja capacity factor profiles for all areas.
 
-    Downloads PV, onshore (current/future), and offshore (current/future)
+    Downloads solar, onshore (current/future), and offshore (current/future)
     from the public country downloads. Produces CSVs in the same format as
     the existing renewable_ninja/ directory: columns ['hour', area1, area2, ...].
 

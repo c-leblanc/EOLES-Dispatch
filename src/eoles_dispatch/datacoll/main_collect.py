@@ -30,7 +30,7 @@ Data structure:
         exo_prices.csv          - hourly day-ahead prices for exo areas (EUR/MWh)
         gap_fill_report.csv/txt - gap-filling audit trail
     data/renewable_ninja/
-        pv.csv, onshore_current.csv, ...  - capacity factor profiles
+        solar.csv, onshore_current.csv, ...  - capacity factor profiles
 
 Functions:
     collect_all(output_dir, start_year, end_year, ...)
@@ -45,7 +45,7 @@ Functions:
 
     collect_production(client, areas, start, end, gap_report)
         Download hourly generation by fuel type per area (MW). ENTSO-E
-        primary, Elexon fallback for UK. PHS split into phs_prod/phs_cons.
+        primary, Elexon fallback for UK. PHS split into phs/phs_in.
         Called from collect_all.
 
     collect_installed_capacity(client, areas, year, out_dir)
@@ -289,7 +289,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
     Downloads generation data from ENTSO-E (or Elexon for UK fallback),
     reindexes onto the canonical index, then gap-fills each fuel series.
     Both sources return the same format: DataFrame with 'hour' column
-    (naive UTC) and fuel columns including 'phs_prod' and 'phs_cons'.
+    (naive UTC) and fuel columns including 'phs' and 'phs_in'.
 
     Args:
         client: EntsoePandasClient.
@@ -299,7 +299,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
         canon_idx: DatetimeIndex from canonical_index(year).
 
     Returns:
-        dict {area: pd.DataFrame} with columns ['hour', fuel1, ..., phs_prod, phs_cons].
+        dict {area: pd.DataFrame} with columns ['hour', fuel1, ..., phs, phs_in].
     """
     result = {}
     for area in areas:

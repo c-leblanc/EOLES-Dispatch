@@ -63,7 +63,7 @@ def _make_production(areas, n_hours=24, fuels=None):
     """
     if fuels is None:
         fuels = ["biomass", "gas", "nuclear", "solar", "onshore", "offshore",
-                 "river", "lake", "phs_prod", "phs_cons", "geothermal",
+                 "river", "lake", "phs", "phs_in", "geothermal",
                  "marine", "other_renew", "waste", "other"]
     result = {}
     rng = np.random.default_rng(42)
@@ -73,6 +73,9 @@ def _make_production(areas, n_hours=24, fuels=None):
         data = {"hour": hours_posix.values}
         for fuel in fuels:
             data[fuel] = rng.uniform(0, 1000, n_hours)
+        # phs_in is negative at all levels (consumption)
+        if "phs_in" in data:
+            data["phs_in"] = -np.abs(data["phs_in"])
         result[area] = pd.DataFrame(data)
     return result
 
@@ -106,20 +109,20 @@ class TestComputeVreCapacityFactors:
     def test_cf_bounded_zero_one(self):
         """Capacity factors must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=24)
-        capa = pd.DataFrame({
-            "area": ["FR", "FR", "FR"],
-            "tec": ["offshore", "onshore", "pv"],
-            "value": [1.0, 1.0, 1.0],  # GW
-        })
+        capa = pd.DataFrame(
+            {"FR": [1000.0, 1000.0, 1000.0]},  # MW
+            index=pd.Index(["offshore", "onshore", "solar"], name="tec"),
+        )
         cf = compute_vre_capacity_factors(production, capa, ["FR"])
         assert cf["value"].min() >= 0.0
         assert cf["value"].max() <= 1.0
 
     def test_cf_output_columns(self):
         production = _make_production(["FR"], n_hours=2)
-        capa = pd.DataFrame({
-            "area": ["FR"], "tec": ["onshore"], "value": [1.0],
-        })
+        capa = pd.DataFrame(
+            {"FR": [1000.0]},  # MW
+            index=pd.Index(["onshore"], name="tec"),
+        )
         cf = compute_vre_capacity_factors(production, capa, ["FR"],
                                            technologies=["onshore"])
         assert list(cf.columns) == ["area", "tec", "hour", "value"]
@@ -129,14 +132,16 @@ class TestComputeRiverCf:
     def test_river_cf_bounded_zero_one(self):
         """River capacity factors must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=24)
-        cf = compute_river_cf(production, ["FR"])
+        cf = compute_vre_capacity_factors(production, None, ["FR"],
+                                          technologies=["river"])
         assert cf["value"].min() >= 0.0
         assert cf["value"].max() <= 1.0
 
     def test_river_cf_peaks_at_one(self):
-        """River CF should peak at 1.0 (normalized by max production)."""
+        """River CF should peak at 1.0 (normalized by max production when no capa given)."""
         production = _make_production(["FR"], n_hours=24)
-        cf = compute_river_cf(production, ["FR"])
+        cf = compute_vre_capacity_factors(production, None, ["FR"],
+                                          technologies=["river"])
         assert cf["value"].max() == pytest.approx(1.0)
 
 
@@ -149,11 +154,11 @@ class TestComputeNuclearMaxAf:
     def test_nuclear_af_bounded(self):
         """Nuclear AF must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=168)  # 1 week
-        capa = pd.DataFrame({
-            "area": ["FR"], "tec": ["nuclear"], "value": [60.0],  # GW
-        })
+        capa = pd.DataFrame(
+            {"FR": [60000.0]},  # MW (60 GW)
+            index=pd.Index(["nuclear"], name="tec"),
+        )
         _, hour_week = compute_hour_mappings(2021)
-        # Filter hour_week to match our small production
         nuc_af = compute_nuclear_max_af(production, capa, ["FR"], hour_week)
         assert nuc_af["value"].min() >= 0.0
         assert nuc_af["value"].max() <= 1.0
@@ -162,9 +167,8 @@ class TestComputeNuclearMaxAf:
         """Areas without nuclear data should get AF=1.0."""
         production = _make_production(["CH"], n_hours=168,
                                        fuels=["gas", "solar"])  # no nuclear column
-        capa = pd.DataFrame(columns=["area", "tec", "value"])
         _, hour_week = compute_hour_mappings(2021)
-        nuc_af = compute_nuclear_max_af(production, capa, ["CH"], hour_week)
+        nuc_af = compute_nuclear_max_af(production, None, ["CH"], hour_week)
         assert all(nuc_af["value"] == 1.0)
 
 

@@ -33,8 +33,8 @@ def chart_vre_profiles(run_dir, areas):
     df = df[df["area"].isin(areas)]
     if df.empty:
         return None
-    tecs = [t for t in ["onshore", "offshore", "pv", "river"] if t in df["tec"].unique()]
-    labels = {"onshore": "Onshore wind", "offshore": "Offshore wind", "pv": "Solar PV", "river": "Run-of-river"}
+    tecs = [t for t in ["onshore", "offshore", "solar", "river"] if t in df["tec"].unique()]
+    labels = {"onshore": "Onshore wind", "offshore": "Offshore wind", "solar": "Solar solar", "river": "Run-of-river"}
     fig = make_subplots(rows=len(tecs), cols=1, shared_xaxes=True,
                         subplot_titles=[labels.get(t, t.capitalize()) for t in tecs],
                         vertical_spacing=0.06)

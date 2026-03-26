@@ -97,7 +97,7 @@ Demand represents the actual system load as published by TSOs through ENTSO-E.
 NMD represents non-dispatchable must-run generation. It is subtracted from gross
 demand to obtain the residual demand that the model must satisfy.
 
-### 3.3 VRE capacity factors (`offshore.csv`, `onshore.csv`, `pv.csv`, `river.csv`)
+### 3.3 VRE capacity factors (`offshore.csv`, `onshore.csv`, `solar.csv`, `river.csv`)
 
 | | |
 |---|---|
@@ -216,7 +216,7 @@ scenarios.
 
 | File | Content |
 |------|---------|
-| `pv.csv` | Solar PV (national aggregate) |
+| `solar.csv` | Solar PV (national aggregate) |
 | `onshore_current.csv` | Onshore wind — current fleet (installed ~2020) |
 | `onshore_future.csv` | Onshore wind — future fleet (next-gen turbines, taller towers) |
 | `offshore_current.csv` | Offshore wind — current fleet |
@@ -248,7 +248,7 @@ Renewables.ninja provides two wind turbine technology assumptions:
   mid-2020s and beyond.
 
 The variant is selectable via `--rn-horizon current|future` when creating a run.
-PV profiles have a single variant (no fleet distinction).
+solar profiles have a single variant (no fleet distinction).
 
 ---
 
@@ -381,7 +381,7 @@ data/
 │   ├── nmd.csv                 Hourly NMD generation by area (GW)
 │   ├── offshore.csv            Hourly offshore wind CF by area
 │   ├── onshore.csv             Hourly onshore wind CF by area
-│   ├── pv.csv                  Hourly solar PV CF by area
+│   ├── solar.csv                  Hourly solar PV CF by area
 │   ├── river.csv               Hourly run-of-river CF by area
 │   ├── exoPrices.csv           Hourly day-ahead prices, exogenous areas (EUR/MWh)
 │   ├── lake_inflows.csv        Monthly lake inflows by area (TWh)
@@ -390,7 +390,7 @@ data/
 │   └── nucMaxAF.csv            Weekly nuclear availability factor (0–1)
 │
 ├── renewable_ninja/
-│   ├── pv.csv                  Solar PV CF (Ninja)
+│   ├── solar.csv                  Solar PV CF (Ninja)
 │   ├── onshore_current.csv     Onshore wind CF, current fleet
 │   ├── onshore_future.csv      Onshore wind CF, future fleet
 │   ├── offshore_current.csv    Offshore wind CF, current fleet

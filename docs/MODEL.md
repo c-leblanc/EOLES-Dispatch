@@ -36,7 +36,7 @@ Exogenous zones are not optimized: their day-ahead price is an input, and trade 
 | $w \in \mathcal{W}$ | Weeks (YYWW) |
 | $tec \in \mathcal{T}$ | All technologies |
 | $thr \in \mathcal{T}_{th} \subset \mathcal{T}$ | Thermal technologies (nuclear, coal_SA, coal_1G, lignite, gas_ccgt1G, gas_ccgt2G, gas_ccgtSA, gas_ocgtSA, oil_light) |
-| $vre \in \mathcal{T}_{vre} \subset \mathcal{T}$ | Variable renewables (offshore, onshore, pv, river) |
+| $vre \in \mathcal{T}_{vre} \subset \mathcal{T}$ | Variable renewables (offshore, onshore, solar, river) |
 | $sto \in \mathcal{T}_{sto} \subset \mathcal{T}$ | Storage (lake_phs, battery) |
 | $nmd$ | Non-market-dependent (biomass, geothermal, marine, waste, etc.) |
 | $frr \subset \mathcal{T}$ | Technologies eligible for reserve provision |

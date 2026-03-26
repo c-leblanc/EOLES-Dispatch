@@ -35,7 +35,8 @@ Functions:
 
     fetch_generation(client, area, start, end)
         Download all fuel types, extract per-fuel production, split PHS
-        into phs_prod/phs_cons, return as hourly naive UTC DataFrame.
+        into phs (production, positive) and phs_in (consumption, negative),
+        return as hourly naive UTC DataFrame.
         Called from main_collect.collect_production.
 
 Internal helpers:
@@ -61,7 +62,7 @@ import logging
 import pandas as pd
 from entsoe import EntsoePandasClient
 
-from ..config import ENTSOE_MIN_COVERAGE, ENTSOE_API_KEY, AREA_CODES, AREA_CODES_PRICE
+from ..config import ENTSOE_MIN_COVERAGE, ENTSOE_API_KEY, AREA_CODES, AREA_CODES_PRICE, RAW_TO_AGG
 from ..utils import resample_to_hourly
 
 logger = logging.getLogger(__name__)
@@ -317,19 +318,16 @@ def fetch_day_ahead_prices(client, area, start, end):
 
 # Fuel types to extract from ENTSO-E multi-level generation columns.
 # PHS is handled separately (needs both production and consumption).
-PRODUCTION_FUELS = [
-    "biomass", "lignite", "coal_gas", "gas", "hard_coal", "oil", "oil_shale",
-    "peat", "geothermal", "river", "lake", "marine", "nuclear", "other_renew",
-    "solar", "waste", "offshore", "onshore", "other",
-]
+# Derived from RAW_TO_AGG keys, excluding phs/phs_in which are special-cased.
+PRODUCTION_FUELS = [k for k in RAW_TO_AGG if k not in ("phs", "phs_in")]
 
 
 def fetch_generation(client, area, start, end):
     """Fetch hourly generation by fuel type from ENTSO-E.
 
     Downloads all PSR types at once and extracts per-fuel production.
-    PHS is split into phs_prod (generation) and phs_cons (pumping, positive).
-    All series are converted to hourly naive UTC.
+    PHS is split into 'phs' (generation, positive) and 'phs_in'
+    (consumption, negative). All series are converted to hourly naive UTC.
     For DE, splits at the Oct 2018 zone transition.
 
     Args:
@@ -339,7 +337,7 @@ def fetch_generation(client, area, start, end):
 
     Returns:
         pd.DataFrame with 'hour' column (naive UTC) and one column per
-        fuel type found. PHS appears as 'phs_prod' and 'phs_cons'.
+        fuel type found. PHS appears as 'phs' and 'phs_in'.
         Returns None if the download fails or returns empty data.
     """
     periods = _resolve_area(area, start, end)
@@ -369,22 +367,22 @@ def fetch_generation(client, area, start, end):
         if found:
             result[fuel] = resample_to_hourly(prod_series)
 
-    # PHS: extract both production and consumption
-    phs_prod = pd.Series(0, index=raw.index, dtype=float)
-    phs_cons = pd.Series(0, index=raw.index, dtype=float)
+    # PHS: extract production (positive) and consumption (negative)
+    phs_gen = pd.Series(0, index=raw.index, dtype=float)
+    phs_in = pd.Series(0, index=raw.index, dtype=float)
     for col in raw.columns:
         if col_matches(col, "phs"):
             if isinstance(col, tuple) and col[1] == "Actual Aggregated":
-                phs_prod = phs_prod.add(raw[col], fill_value=0)
+                phs_gen = phs_gen.add(raw[col], fill_value=0)
             elif isinstance(col, tuple) and col[1] == "Actual Consumption":
-                phs_cons = phs_cons.add(raw[col].abs(), fill_value=0)
+                phs_in = phs_in.add(-raw[col].abs(), fill_value=0)
             elif not isinstance(col, tuple):
                 # Single column = net production; approximate prod/cons split
-                phs_prod = phs_prod.add(raw[col].clip(lower=0), fill_value=0)
-                phs_cons = phs_cons.add((-raw[col]).clip(lower=0), fill_value=0)
+                phs_gen = phs_gen.add(raw[col].clip(lower=0), fill_value=0)
+                phs_in = phs_in.add(-(-raw[col]).clip(lower=0), fill_value=0)
 
-    result["phs_prod"] = resample_to_hourly(phs_prod)
-    result["phs_cons"] = resample_to_hourly(phs_cons)
+    result["phs"] = resample_to_hourly(phs_gen)
+    result["phs_in"] = resample_to_hourly(phs_in)
 
     df = pd.DataFrame(result)
     df.index.name = "hour"

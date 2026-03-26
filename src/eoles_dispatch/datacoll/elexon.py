@@ -25,8 +25,9 @@ Functions:
 
     fetch_generation(start, end)
         Fetch generation by fuel type from /generation/actual/per-type.
-        Splits PHS into phs_prod/phs_cons. Returns a DataFrame with
-        'hour' column (naive UTC) and one column per fuel.
+        Splits PHS into 'phs' (production, positive) and 'phs_in'
+        (consumption, negative). Returns a DataFrame with 'hour' column
+        (naive UTC) and one column per fuel.
         Called from main_collect.collect_production, fetch_generation_for_fuel.
 
     fetch_generation_for_fuel(start, end, fuel)
@@ -181,8 +182,8 @@ def fetch_demand(start, end):
 def fetch_generation(start, end):
     """Fetch actual generation by fuel type for GB from Elexon, in MW.
 
-    PHS is split into 'phs_prod' (generation, positive) and 'phs_cons'
-    (pumping, positive). All other fuel types appear as individual columns.
+    PHS is split into 'phs' (generation, positive) and 'phs_in'
+    (consumption, negative). All other fuel types appear as individual columns.
 
     Args:
         start: Start datetime.
@@ -232,14 +233,14 @@ def fetch_generation(start, end):
         for col in pivot.columns
     })
 
-    # PHS: split net value into production and consumption (both positive)
+    # PHS: split net value into production (positive) and consumption (negative)
     if "phs" in result.columns:
-        result["phs_prod"] = result["phs"].clip(lower=0).fillna(0)
-        result["phs_cons"] = (-result["phs"]).clip(lower=0).fillna(0)
-        result = result.drop(columns=["phs"])
+        phs_net = result["phs"]
+        result["phs"] = phs_net.clip(lower=0).fillna(0)
+        result["phs_in"] = -(-phs_net).clip(lower=0).fillna(0)
     else:
-        result["phs_prod"] = 0.0
-        result["phs_cons"] = 0.0
+        result["phs"] = 0.0
+        result["phs_in"] = 0.0
 
     result.index.name = "hour"
     return result.reset_index()

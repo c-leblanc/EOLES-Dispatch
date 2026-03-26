@@ -197,19 +197,19 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
     if actCF:
         vre_profiles = compute_vre_capacity_factors(
             production, installed_capa, areas,
-            technologies=["offshore", "onshore", "pv"],
+            technologies=["offshore", "onshore", "solar"],
         )
     else:
         offshore = load_ninja_var(data_dir, f"offshore_{rn_horizon}", areas, valid_hours)
         onshore = load_ninja_var(data_dir, f"onshore_{rn_horizon}", areas, valid_hours)
-        pv = load_ninja_var(data_dir, "pv", areas, valid_hours)
+        solar = load_ninja_var(data_dir, "solar", areas, valid_hours)
         offshore["tec"] = "offshore"
         onshore["tec"] = "onshore"
-        pv["tec"] = "pv"
+        solar["tec"] = "solar"
         vre_profiles = pd.concat([
             offshore[["area", "tec", "hour", "value"]],
             onshore[["area", "tec", "hour", "value"]],
-            pv[["area", "tec", "hour", "value"]],
+            solar[["area", "tec", "hour", "value"]],
         ])
 
     # River CF: always from production, installed_capa used if available

@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 
-from .config import TRLOSS
+from collections import defaultdict
+
+from .config import TRLOSS, MODEL_TO_AGG
 
 
 def _ensure_output_dir(run_dir):
@@ -95,48 +97,22 @@ def report_production(model, run_dir):
     exo_im_vals = _extract_var_values_bulk(model.exo_im)
     exo_ex_vals = _extract_var_values_bulk(model.exo_ex)
 
-    production = pd.DataFrame(
-        index=range(n_rows),
-        columns=["area", "hour", "nmd", "pv", "river", "nuclear", "lake_phs",
-                 "wind", "coal", "gas", "oil", "battery", "phs_in", "battery_in",
-                 "net_imports"],
-    )
     areas = sorted(model.a)
     hours = sorted(model.h)
-    production.area = np.repeat(areas, len(hours), axis=0)
-    production.hour = hours * len(areas)
 
-    # Individual technologies
-    for tec in ["nmd", "pv", "river", "nuclear", "lake_phs", "battery"]:
-        if tec in model.tec:
-            production[tec] = _safe_gene_values(gene_vals, tec, n_rows)
+    production = pd.DataFrame({"area": np.repeat(areas, len(hours), axis=0),
+                                "hour": hours * len(areas)})
 
-    # Aggregated wind = onshore + offshore
-    production.wind = (
-        _safe_gene_values(gene_vals, "onshore", n_rows)
-        + _safe_gene_values(gene_vals, "offshore", n_rows)
-    ).tolist()
-
-    # Aggregated coal = coal_SA + coal_1G + lignite
-    production.coal = (
-        _safe_gene_values(gene_vals, "coal_SA", n_rows)
-        + _safe_gene_values(gene_vals, "coal_1G", n_rows)
-        + _safe_gene_values(gene_vals, "lignite", n_rows)
-    ).tolist()
-
-    # Aggregated gas = ccgt1G + ccgt2G + ccgtSA + ocgtSA
-    production.gas = (
-        _safe_gene_values(gene_vals, "gas_ccgt1G", n_rows)
-        + _safe_gene_values(gene_vals, "gas_ccgt2G", n_rows)
-        + _safe_gene_values(gene_vals, "gas_ccgtSA", n_rows)
-        + _safe_gene_values(gene_vals, "gas_ocgtSA", n_rows)
-    ).tolist()
-
-    production.oil = _safe_gene_values(gene_vals, "oil_light", n_rows).tolist()
+    # Aggregate generation using MODEL_TO_AGG: group model techs by agg name and sum
+    agg_groups = defaultdict(lambda: np.zeros(n_rows))
+    for model_tec, agg_name in MODEL_TO_AGG.items():
+        agg_groups[agg_name] += _safe_gene_values(gene_vals, model_tec, n_rows)
+    for agg_name, values in agg_groups.items():
+        production[agg_name] = values.tolist()
 
     # Storage charging (negative = consumption)
-    production.phs_in = (-_safe_var_values(stor_vals, "lake_phs", n_rows)).tolist()
-    production.battery_in = (-_safe_var_values(stor_vals, "battery", n_rows)).tolist()
+    production["phs_in"] = (-_safe_var_values(stor_vals, "lake_phs", n_rows)).tolist()
+    production["battery_in"] = (-_safe_var_values(stor_vals, "battery", n_rows)).tolist()
 
     # Net imports per area: sum over all trading partners
     areas = list(model.a)

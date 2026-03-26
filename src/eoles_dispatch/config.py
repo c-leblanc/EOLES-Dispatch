@@ -1,33 +1,18 @@
 """Project-wide configuration constants and environment loading.
 
-Centralizes all parameters, area code mappings, and environment variables
-used across the pipeline. Loaded once at import time.
+Centralizes all parameters, area code mappings, technology nomenclature
+mappings, and environment variables used across the pipeline.
+Loaded once at import time.
 
-Used by:
-    - datacoll/entsoe.py    (ENTSOE_API_KEY, AREA_CODES, AREA_CODES_PRICE, ENTSOE_MIN_COVERAGE)
-    - datacoll/main_collect.py (DEFAULT_AREAS, DEFAULT_EXO_AREAS, ENTSOE_MIN_COVERAGE)
-    - datacoll/rninja.py    (DEFAULT_AREAS)
-    - format_inputs.py      (NMD_TYPES)
-    - run.py                (DEFAULT_AREAS, DEFAULT_EXO_AREAS)
+Three technology nomenclature levels exist in the project:
+    - **raw**:   fuel types as collected from external sources (ENTSO-E, Elexon).
+                 Used in data/<year>/production_<area>.csv.
+    - **model**: technologies as defined in the LP model scenarios.
+                 Used in scenario CSVs and Pyomo sets.
+    - **agg**:   aggregated categories for outputs and visualizations.
+                 Used in runs/<name>/outputs/production.csv and charts.
 
-Constants:
-    _load_dotenv()          - Load .env file at module import time.
-
-    LOAD_UNCERTAINTY        - Uncertainty coefficient for hourly demand.
-    DELTA                   - Load variation factor.
-    VOLL                    - Value of lost load (EUR/MWh).
-    ETA_IN / ETA_OUT        - Storage charging/discharging efficiencies.
-    TRLOSS                  - Transportation loss on power trade.
-    GJ_MWH                  - GJ to MWh conversion factor.
-
-    ENTSOE_API_KEY          - API key read from environment.
-    ENTSOE_MIN_COVERAGE     - Minimum data coverage ratio for ENTSO-E series.
-
-    DEFAULT_AREAS           - Default modeled country codes.
-    DEFAULT_EXO_AREAS       - Default exogenous (non-modeled) country codes.
-    NMD_TYPES               - Non-market-dependent fuel types.
-    AREA_CODES              - Mapping our area codes -> ENTSO-E bidding zone codes.
-    AREA_CODES_PRICE        - Override mapping for day-ahead price queries.
+RAW_TO_AGG and MODEL_TO_AGG define the canonical mappings between levels.
 """
 
 import pandas as pd
@@ -87,7 +72,72 @@ ENTSOE_MIN_COVERAGE = 0.5
 DEFAULT_AREAS = ["FR", "BE", "DE", "CH", "IT", "ES", "UK"] # Default modeled areas
 DEFAULT_EXO_AREAS = ["NL", "DK1", "DK2", "SE4", "PL", "CZ", "AT", "GR", "SI", "PT", "IE"] # Default exogenous (non-modeled) areas
 
-NMD_TYPES = ["biomass", "geothermal", "marine", "other_renew", "waste", "other"] # NMD (non-market-dependent) fuel types treated as exogenous
+
+# ── Technology nomenclature mappings ──
+#
+# RAW_TO_AGG: raw (collected data) → agg (output/viz).
+#   Keys = column names in data/<year>/production_<area>.csv.
+#   Values = column names in runs/<name>/outputs/production.csv.
+#   Also used to derive NMD_TYPES for compute_nmd().
+#
+# MODEL_TO_AGG: model (LP technologies) → agg (output/viz).
+#   Keys = technology names from scenario CSVs (capa.csv, thr_specs.csv).
+#   Values = same agg namespace as RAW_TO_AGG.
+#   Used by format_outputs.py and viz/_theme.py.
+
+RAW_TO_AGG = {
+    # Renewables
+    "solar":        "solar",
+    "onshore":      "wind",
+    "offshore":     "wind",
+    "river":        "river",
+    "lake":         "lake_phs",
+    # Nuclear
+    "nuclear":      "nuclear",
+    # Thermal
+    "gas":          "gas",
+    "coal_gas":     "gas",
+    "hard_coal":    "coal",
+    "lignite":      "coal",
+    "oil":          "oil",
+    "oil_shale":    "oil",
+    "peat":         "nmd",
+    # NMD (non-market-dependent)
+    "biomass":      "nmd",
+    "geothermal":   "nmd",
+    "marine":       "nmd",
+    "other_renew":  "nmd",
+    "waste":        "nmd",
+    "other":        "nmd",
+    # Storage (hydro pumped storage)
+    "phs":          "lake_phs",
+    "phs_in":       "phs_in",       # negative at all levels
+}
+
+MODEL_TO_AGG = {
+    # Thermal sub-types
+    "gas_ccgt1G":   "gas",
+    "gas_ccgt2G":   "gas",
+    "gas_ccgtSA":   "gas",
+    "gas_ocgtSA":   "gas",
+    "coal_1G":      "coal",
+    "coal_SA":      "coal",
+    "lignite":      "coal",
+    "oil_light":    "oil",
+    # VRE
+    "onshore":      "wind",
+    "offshore":     "wind",
+    # Identity mappings (no sub-types)
+    "nuclear":      "nuclear",
+    "solar":        "solar",
+    "river":        "river",
+    "lake_phs":     "lake_phs",
+    "battery":      "battery",
+    "nmd":          "nmd",
+}
+
+# NMD fuel types, derived from RAW_TO_AGG (single source of truth).
+NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]
 
 
 AREA_CODES = { # Matching to ENTSOE area codes

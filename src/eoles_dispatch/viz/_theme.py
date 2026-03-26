@@ -1,5 +1,7 @@
 """Color palettes, typography, and Plotly theme helpers."""
 
+from ..config import MODEL_TO_AGG
+
 # ── Color palettes (from pyREADING.R) ──
 
 COUNTRY_COLORS = {
@@ -18,7 +20,7 @@ TEC_COLORS = {
     "coal":         "#6c757d",
     "oil":          "#262626",
     "wind":         "#005900",
-    "pv":           "#ffff00",
+    "solar":        "#ffff00",
     "river":        "#011f4b",
     "lake_phs":     "#6497b1",
     "battery":      "#ffa500",
@@ -30,32 +32,34 @@ TEC_COLORS = {
     "battery_in":   "#ffa500",
 }
 
-TEC_AGGREGATION = {
+# Display labels for technologies.
+# Derived from MODEL_TO_AGG for model-level sub-types, plus entries for
+# agg-level names (used in production.csv columns) and special categories.
+_AGG_DISPLAY = {
     "nuclear":      "Nuclear",
-    "gas_ccgt1G":   "Gas",
-    "gas_ccgt2G":   "Gas",
-    "gas_ccgtSA":   "Gas",
-    "gas_ocgtSA":   "Gas",
     "gas":          "Gas",
-    "coal_1G":      "Coal",
-    "coal_SA":      "Coal",
-    "lignite":      "Coal",
     "coal":         "Coal",
-    "oil_light":    "Oil",
     "oil":          "Oil",
-    "onshore":      "Wind",
-    "offshore":     "Wind",
     "wind":         "Wind",
-    "pv":           "PV",
+    "solar":        "Solar",
     "river":        "River",
     "lake_phs":     "Lake/PHS",
-    "phs_in":       "Lake/PHS (charge)",
     "battery":      "Battery",
-    "battery_in":   "Battery (charge)",
-    "biomass":      "Biomass",
     "nmd":          "NMD",
+    "phs_in":       "Lake/PHS (charge)",
+    "battery_in":   "Battery (charge)",
     "net_imports":  "Net imports",
     "net_exo_imports": "Net imports (exo)",
+    "biomass":      "Biomass",
+}
+
+# TEC_AGGREGATION: maps both model-level and agg-level tech names to display labels.
+# Model-level entries are derived from MODEL_TO_AGG → _AGG_DISPLAY.
+TEC_AGGREGATION = {
+    **{model_tec: _AGG_DISPLAY[agg_name]
+       for model_tec, agg_name in MODEL_TO_AGG.items()
+       if agg_name in _AGG_DISPLAY},
+    **_AGG_DISPLAY,
 }
 
 AGG_COLORS = {
@@ -64,7 +68,7 @@ AGG_COLORS = {
     "Coal":              "#6c757d",
     "Oil":               "#262626",
     "Wind":              "#005900",
-    "PV":                "#ffff00",
+    "Solar":             "#ffff00",
     "River":             "#011f4b",
     "Lake/PHS":          "#6497b1",
     "Lake/PHS (charge)": "#b5d4e8",
@@ -78,7 +82,7 @@ AGG_COLORS = {
 
 # Order for stacked area (bottom to top) — positive generation
 AGG_ORDER_POS = [
-    "Nuclear", "Gas", "Coal", "Oil", "Wind", "PV",
+    "Nuclear", "Gas", "Coal", "Oil", "Wind", "Solar",
     "River", "Lake/PHS", "Battery", "Biomass", "NMD",
     "Net imports", "Net imports (exo)",
 ]

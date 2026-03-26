@@ -49,7 +49,7 @@ def compute_vre_capacity_factors(
         production,
         installed_capa,
         areas,
-        technologies=["offshore", "onshore", "pv", "river"]
+        technologies=["offshore", "onshore", "solar", "river"]
         ):
     """Compute VRE capacity factors from raw production and installed capacity.
 
@@ -62,7 +62,7 @@ def compute_vre_capacity_factors(
         installed_capa: DataFrame with tec as index and area codes as columns (MW).
             Loaded from data/<year>/installed_capacity.csv.
         areas: List of area codes.
-        technologies: List of VRE tech names (default: offshore, onshore, pv, river).
+        technologies: List of VRE tech names (default: offshore, onshore, solar, river).
 
     Returns:
         DataFrame with columns ['area', 'tec', 'hour', 'value'].
@@ -157,11 +157,12 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
     return pd.concat(result_parts, ignore_index=True)[["area", "week", "value"]]
 
 
-def compute_lake_inflows(production, areas, hour_month, 
+def compute_lake_inflows(production, areas, hour_month,
                          eta_phs=ETA_IN["lake_phs"]*ETA_OUT["lake_phs"]):
     """Compute monthly lake inflows from raw production data.
 
-    lake_inflows = lake_prod + phs_prod - η * phs_cons, summed monthly, in TWh.
+    lake_inflows = lake + phs + η * phs_in, summed monthly, in TWh.
+    (phs_in is negative, so η * phs_in subtracts the pumping losses.)
 
     Args:
         production: dict {area: DataFrame} with columns ['hour', ...].
@@ -187,20 +188,20 @@ def compute_lake_inflows(production, areas, hour_month,
         else:
             prod_hours["lake"] = 0.0
 
-        # PHS prod/cons
-        if "phs_prod" in df.columns:
-            prod_hours["phs_prod"] = df["phs_prod"].values
+        # PHS production (positive) and consumption (negative)
+        if "phs" in df.columns:
+            prod_hours["phs"] = df["phs"].values
         else:
-            prod_hours["phs_prod"] = 0.0
+            prod_hours["phs"] = 0.0
 
-        if "phs_cons" in df.columns:
-            prod_hours["phs_cons"] = df["phs_cons"].values
+        if "phs_in" in df.columns:
+            prod_hours["phs_in"] = df["phs_in"].values
         else:
-            prod_hours["phs_cons"] = 0.0
+            prod_hours["phs_in"] = 0.0
 
-        # Net inflow = lake_prod + phs_prod - η * phs_cons
+        # Net inflow = lake + phs + η * phs_in  (phs_in is negative)
         prod_hours["inflow_mw"] = (
-            prod_hours["lake"] + prod_hours["phs_prod"] - eta_phs * prod_hours["phs_cons"]
+            prod_hours["lake"] + prod_hours["phs"] + eta_phs * prod_hours["phs_in"]
         )
 
         # Merge with month mapping and aggregate
@@ -219,8 +220,8 @@ def compute_lake_inflows(production, areas, hour_month,
 def compute_hydro_limits(production, areas, hour_month):
     """Compute monthly max hydro charge/discharge from raw production.
 
-    hMaxOut = monthly max of (lake_prod + phs_prod), in GW.
-    hMaxIn  = monthly max of phs_cons, in GW.
+    hMaxOut = monthly max of (lake + phs), in GW.
+    hMaxIn  = monthly max of abs(phs_in), in GW.
 
     Args:
         production: dict {area: DataFrame} with columns ['hour', ...].
@@ -242,12 +243,12 @@ def compute_hydro_limits(production, areas, hour_month):
 
         # Discharge: lake + PHS production
         lake_prod = df["lake"].values if "lake" in df.columns else np.zeros(len(df))
-        phs_prod = df["phs_prod"].values if "phs_prod" in df.columns else np.zeros(len(df))
-        prod_hours["out_mw"] = np.clip(lake_prod + phs_prod, 0, None)
+        phs_gen = df["phs"].values if "phs" in df.columns else np.zeros(len(df))
+        prod_hours["out_mw"] = np.clip(lake_prod + phs_gen, 0, None)
 
-        # Charge: PHS consumption
-        phs_cons = df["phs_cons"].values if "phs_cons" in df.columns else np.zeros(len(df))
-        prod_hours["in_mw"] = np.clip(phs_cons, 0, None)
+        # Charge: abs(phs_in) — phs_in is negative
+        phs_in = df["phs_in"].values if "phs_in" in df.columns else np.zeros(len(df))
+        prod_hours["in_mw"] = np.abs(phs_in)
 
         # Merge with month mapping and get monthly max
         merged = prod_hours.merge(hour_month, on="hour", how="inner")
