@@ -81,7 +81,6 @@ PSR_MAP = {
 }
 
 
-
 def _fetch_json(endpoint, params):
     """Fetch JSON from the Elexon Insights API.
 
@@ -136,6 +135,7 @@ def _to_hourly_utc(df, value_col="value"):
 
 # ── Demand ──────────────────────────────────────────────────────────────────
 
+
 def fetch_demand(start, end):
     """Fetch actual total load for GB from Elexon, in MW.
 
@@ -152,21 +152,24 @@ def fetch_demand(start, end):
     records = []
 
     for chunk_start, chunk_end in _date_chunks(start, end):
-        data = _fetch_json("/demand/outturn", {
-            "settlementDateFrom": chunk_start.strftime("%Y-%m-%d"),
-            "settlementDateTo": chunk_end.strftime("%Y-%m-%d"),
-        })
+        data = _fetch_json(
+            "/demand/outturn",
+            {
+                "settlementDateFrom": chunk_start.strftime("%Y-%m-%d"),
+                "settlementDateTo": chunk_end.strftime("%Y-%m-%d"),
+            },
+        )
         if data is None or "data" not in data:
             continue
 
         for rec in data["data"]:
-            ts = _settlement_period_to_time(
-                rec["settlementDate"], rec["settlementPeriod"]
+            ts = _settlement_period_to_time(rec["settlementDate"], rec["settlementPeriod"])
+            records.append(
+                {
+                    "timestamp": ts,
+                    "value": rec.get("initialDemandOutturn", 0) or 0,
+                }
             )
-            records.append({
-                "timestamp": ts,
-                "value": rec.get("initialDemandOutturn", 0) or 0,
-            })
 
     if not records:
         logger.warning("  No demand data returned from Elexon")
@@ -178,6 +181,7 @@ def fetch_demand(start, end):
 
 
 # ── Generation by fuel type ─────────────────────────────────────────────────
+
 
 def fetch_generation(start, end):
     """Fetch actual generation by fuel type for GB from Elexon, in MW.
@@ -197,10 +201,13 @@ def fetch_generation(start, end):
     records = []
 
     for chunk_start, chunk_end in _date_chunks(start, end):
-        data = _fetch_json("/generation/actual/per-type", {
-            "from": chunk_start.strftime("%Y-%m-%dT%H:%MZ"),
-            "to": chunk_end.strftime("%Y-%m-%dT%H:%MZ"),
-        })
+        data = _fetch_json(
+            "/generation/actual/per-type",
+            {
+                "from": chunk_start.strftime("%Y-%m-%dT%H:%MZ"),
+                "to": chunk_end.strftime("%Y-%m-%dT%H:%MZ"),
+            },
+        )
         if data is None or "data" not in data:
             continue
 
@@ -212,11 +219,13 @@ def fetch_generation(start, end):
                 if our_name is None:
                     logger.debug(f"  Unmapped Elexon psrType: {psr_type!r}")
                     continue
-                records.append({
-                    "timestamp": ts,
-                    "fuel": our_name,
-                    "value": gen.get("quantity", 0) or 0,
-                })
+                records.append(
+                    {
+                        "timestamp": ts,
+                        "fuel": our_name,
+                        "value": gen.get("quantity", 0) or 0,
+                    }
+                )
 
     if not records:
         logger.warning("  No generation data returned from Elexon")
@@ -224,14 +233,9 @@ def fetch_generation(start, end):
 
     df = pd.DataFrame(records)
     # Pivot to wide format: one column per fuel type
-    pivot = df.pivot_table(
-        index="timestamp", columns="fuel", values="value", aggfunc="mean"
-    )
+    pivot = df.pivot_table(index="timestamp", columns="fuel", values="value", aggfunc="mean")
     # Normalize each column to hourly naive UTC via shared helper
-    result = pd.DataFrame({
-        col: resample_to_hourly(pivot[col])
-        for col in pivot.columns
-    })
+    result = pd.DataFrame({col: resample_to_hourly(pivot[col]) for col in pivot.columns})
 
     # PHS: split net value into production (positive) and consumption (negative)
     if "phs" in result.columns:
@@ -244,7 +248,6 @@ def fetch_generation(start, end):
 
     result.index.name = "hour"
     return result.reset_index()
-
 
 
 def fetch_generation_for_fuel(start, end, fuel):
@@ -263,6 +266,7 @@ def fetch_generation_for_fuel(start, end, fuel):
 
 
 # ── Day-ahead prices ────────────────────────────────────────────────────────
+
 
 def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
     """Fetch day-ahead market index prices for GB from Elexon, in EUR/MWh.
@@ -285,21 +289,26 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
     records = []
 
     for chunk_start, chunk_end in _date_chunks(start, end):
-        data = _fetch_json("/balancing/pricing/market-index", {
-            "from": chunk_start.strftime("%Y-%m-%d"),
-            "to": chunk_end.strftime("%Y-%m-%d"),
-        })
+        data = _fetch_json(
+            "/balancing/pricing/market-index",
+            {
+                "from": chunk_start.strftime("%Y-%m-%d"),
+                "to": chunk_end.strftime("%Y-%m-%d"),
+            },
+        )
         if data is None or "data" not in data:
             continue
 
         for rec in data["data"]:
-            records.append({
-                "timestamp": _settlement_period_to_time(
-                    rec["settlementDate"], rec["settlementPeriod"]
-                ),
-                "provider": rec.get("dataProvider", ""),
-                "price": rec.get("price", np.nan),
-            })
+            records.append(
+                {
+                    "timestamp": _settlement_period_to_time(
+                        rec["settlementDate"], rec["settlementPeriod"]
+                    ),
+                    "provider": rec.get("dataProvider", ""),
+                    "price": rec.get("price", np.nan),
+                }
+            )
 
     if not records:
         logger.warning("  No price data returned from Elexon")
@@ -322,6 +331,7 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
 
 # ── Installed capacity ─────────────────────────────────────────────────────
 
+
 def fetch_installed_capacity(year):
     """Fetch installed generation capacity per fuel type for GB, in MW.
 
@@ -334,10 +344,13 @@ def fetch_installed_capacity(year):
     Returns:
         dict {fuel_type: mw} using our internal fuel names, or None on failure.
     """
-    data = _fetch_json("/datasets/IGCPU", {
-        "publishDateTimeFrom": f"{year}-01-01T00:00:00Z",
-        "publishDateTimeTo": f"{year + 1}-01-01T00:00:00Z",
-    })
+    data = _fetch_json(
+        "/datasets/IGCPU",
+        {
+            "publishDateTimeFrom": f"{year}-01-01T00:00:00Z",
+            "publishDateTimeTo": f"{year + 1}-01-01T00:00:00Z",
+        },
+    )
     if data is None or "data" not in data or not data["data"]:
         logger.warning("Elexon installed capacity unavailable for year %d", year)
         return None

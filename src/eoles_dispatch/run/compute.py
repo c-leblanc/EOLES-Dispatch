@@ -8,10 +8,10 @@ production dicts with POSIX hours.
 import numpy as np
 import pandas as pd
 
-from ..config import NMD_TYPES, ETA_IN, ETA_OUT
+from ..config import ETA_IN, ETA_OUT, NMD_TYPES
 
 
-def compute_nmd(production, areas, nmd_tecs = NMD_TYPES):
+def compute_nmd(production, areas, nmd_tecs=NMD_TYPES):
     """Compute NMD (non-market-dependent) production from raw generation data.
 
     NMD = sum of biomass, geothermal, marine, other_renew, waste, other.
@@ -32,10 +32,12 @@ def compute_nmd(production, areas, nmd_tecs = NMD_TYPES):
             nmd_series = df[nmd_cols].sum(axis=1) / 1000  # MW → GW
         else:
             nmd_series = pd.Series(0, index=df.index)
-        frames[area] = pd.DataFrame({
-            "hour": df["hour"].values,
-            "value": nmd_series.values,
-        })
+        frames[area] = pd.DataFrame(
+            {
+                "hour": df["hour"].values,
+                "value": nmd_series.values,
+            }
+        )
         frames[area]["area"] = area
 
     if not frames:
@@ -46,11 +48,8 @@ def compute_nmd(production, areas, nmd_tecs = NMD_TYPES):
 
 
 def compute_vre_capacity_factors(
-        production,
-        installed_capa,
-        areas,
-        technologies=["offshore", "onshore", "solar", "river"]
-        ):
+    production, installed_capa, areas, technologies=["offshore", "onshore", "solar", "river"]
+):
     """Compute VRE capacity factors from raw production and installed capacity.
 
     CF = hourly_production / installed_capacity.
@@ -77,20 +76,24 @@ def compute_vre_capacity_factors(
             prod_mw = df[tec].values
 
             # Use installed capacity if available, otherwise approximate from max production
-            if (installed_capa is not None
-                    and tec in installed_capa.index
-                    and area in installed_capa.columns):
+            if (
+                installed_capa is not None
+                and tec in installed_capa.index
+                and area in installed_capa.columns
+            ):
                 capa_mw = installed_capa.loc[tec, area]
             else:
                 capa_mw = prod_mw.max()
             cf = prod_mw / capa_mw if capa_mw > 0 else np.zeros_like(prod_mw)
 
-            frame = pd.DataFrame({
-                "area": area,
-                "tec": tec,
-                "hour": df["hour"].values,
-                "value": cf,
-            })
+            frame = pd.DataFrame(
+                {
+                    "area": area,
+                    "tec": tec,
+                    "hour": df["hour"].values,
+                    "value": cf,
+                }
+            )
             frames.append(frame)
 
     if not frames:
@@ -129,9 +132,11 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
         merged = df[["hour", "nuclear"]].merge(hour_week, on="hour", how="inner")
 
         # Get installed nuclear capacity (MW)
-        if (installed_capa is not None
-                and "nuclear" in installed_capa.index
-                and area in installed_capa.columns):
+        if (
+            installed_capa is not None
+            and "nuclear" in installed_capa.index
+            and area in installed_capa.columns
+        ):
             capa_mw = installed_capa.loc["nuclear", area]
         else:
             capa_mw = merged["nuclear"].max() if merged["nuclear"].max() > 0 else 1
@@ -157,8 +162,9 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
     return pd.concat(result_parts, ignore_index=True)[["area", "week", "value"]]
 
 
-def compute_lake_inflows(production, areas, hour_month,
-                         eta_phs=ETA_IN["lake_phs"]*ETA_OUT["lake_phs"]):
+def compute_lake_inflows(
+    production, areas, hour_month, eta_phs=ETA_IN["lake_phs"] * ETA_OUT["lake_phs"]
+):
     """Compute monthly lake inflows from raw production data.
 
     lake_inflows = lake + phs + η * phs_in, summed monthly, in TWh.

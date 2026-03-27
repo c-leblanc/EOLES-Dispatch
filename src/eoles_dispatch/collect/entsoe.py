@@ -55,10 +55,11 @@ Constants:
 """
 
 import logging
+
 import pandas as pd
 from entsoe import EntsoePandasClient
 
-from ..config import ENTSOE_MIN_COVERAGE, ENTSOE_API_KEY, AREA_CODES, AREA_CODES_PRICE, RAW_TO_AGG
+from ..config import AREA_CODES, AREA_CODES_PRICE, ENTSOE_API_KEY, ENTSOE_MIN_COVERAGE, RAW_TO_AGG
 from ..utils import resample_to_hourly
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def _to_api_timestamps(start, end):
 
 # ── Preliminary ──
 
+
 def set_client():
     """Check that the ENTSO-E API key is set and looks valid and set the client
 
@@ -95,7 +97,7 @@ def set_client():
     Raises EnvironmentError if the key is missing, or RuntimeError if the test
     query fails (wrong key, network issue, etc.).
     """
-    print("Validating ENTSO-E API key...", end='', flush=True)
+    print("Validating ENTSO-E API key...", end="", flush=True)
 
     if not ENTSOE_API_KEY:
         raise EnvironmentError(
@@ -115,7 +117,7 @@ def set_client():
 
     # Set the entsoe client
     client = EntsoePandasClient(api_key=ENTSOE_API_KEY)
-    
+
     # Quick smoke test: query 1 hour of FR load
     try:
         test_start = pd.Timestamp("2023-01-01", tz="Europe/Brussels")
@@ -133,6 +135,7 @@ def set_client():
     logger.info("OK")
     return client
 
+
 def is_usable(series, start, end):
     """Check whether an ENTSO-E series has sufficient coverage.
 
@@ -148,7 +151,6 @@ def is_usable(series, start, end):
         return False
     valid_count = series.notna().sum() if isinstance(series, pd.Series) else len(series)
     return (valid_count / expected_hours) >= ENTSOE_MIN_COVERAGE
-
 
 
 # Human-readable column names returned by entsoe-py when querying with psr_type=None.
@@ -214,8 +216,7 @@ def _resolve_area(area, start, end):
         elif s >= _DE_TRANSITION:
             return [("DE_LU", s, e)]
         else:
-            return [("DE_AT_LU", s, _DE_TRANSITION),
-                    ("DE_LU", _DE_TRANSITION, e)]
+            return [("DE_AT_LU", s, _DE_TRANSITION), ("DE_LU", _DE_TRANSITION, e)]
     code = AREA_CODES.get(area)
     if code is None:
         raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
@@ -235,6 +236,7 @@ def _resolve_area_price(area, start, end):
 
 
 # ── Demand ──
+
 
 def fetch_demand(client, area, start, end):
     """Fetch hourly actual load from ENTSO-E for a single area, in MW.
@@ -267,6 +269,7 @@ def fetch_demand(client, area, start, end):
 
 
 # ── Day-ahead prices ──
+
 
 def fetch_day_ahead_prices(client, area, start, end):
     """Fetch hourly day-ahead prices from ENTSO-E for a single area, in EUR/MWh.
@@ -374,6 +377,7 @@ def fetch_generation(client, area, start, end):
 
 # ── Installed generation capacity ──
 
+
 def fetch_installed_capacity(client, area, year):
     """Fetch installed generation capacity per fuel type for a year, in MW.
 
@@ -396,9 +400,7 @@ def fetch_installed_capacity(client, area, year):
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
         try:
-            raw = client.query_installed_generation_capacity(
-                code, start=api_start, end=api_end
-            )
+            raw = client.query_installed_generation_capacity(code, start=api_start, end=api_end)
         except Exception as e:
             logger.warning("Installed capacity unavailable for %s: %s", area, e)
             return None
@@ -416,4 +418,3 @@ def fetch_installed_capacity(client, area, year):
             if val > 0:
                 result[fuel_type] = val
     return result if result else None
-

@@ -5,16 +5,11 @@ that model construction works correctly: sets, variables, constraints, and
 objective are created with the right dimensions. No solver is invoked.
 """
 
-import itertools
-from pathlib import Path
-
-import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 import pytest
 
 from eoles_dispatch.models import build_default_model, build_static_thermal_model
-
 
 # ---------------------------------------------------------------------------
 # Fixture: generate a minimal set of input CSVs
@@ -53,7 +48,6 @@ def input_dir(tmp_path):
     d.mkdir()
 
     n_h = len(HOURS)
-    n_a = len(AREAS)
 
     # ── Sets ──
     _write_1col(d / "areas.csv", AREAS)
@@ -71,105 +65,113 @@ def input_dir(tmp_path):
     # ── Time-series ──
     # demand: (area, hour, value)
     rows_ah = [(a, h) for a in AREAS for h in HOURS]
-    _write_3col(d / "demand.csv",
-                [r[0] for r in rows_ah],
-                [r[1] for r in rows_ah],
-                [50.0] * len(rows_ah))
+    _write_3col(
+        d / "demand.csv", [r[0] for r in rows_ah], [r[1] for r in rows_ah], [50.0] * len(rows_ah)
+    )
 
     # nmd: (area, hour, value)
-    _write_3col(d / "nmd.csv",
-                [r[0] for r in rows_ah],
-                [r[1] for r in rows_ah],
-                [5.0] * len(rows_ah))
+    _write_3col(
+        d / "nmd.csv", [r[0] for r in rows_ah], [r[1] for r in rows_ah], [5.0] * len(rows_ah)
+    )
 
     # exoPrices: (exo_area, hour, value)
     rows_exo_h = [(ea, h) for ea in EXO_AREAS for h in HOURS]
-    _write_3col(d / "exoPrices.csv",
-                [r[0] for r in rows_exo_h],
-                [r[1] for r in rows_exo_h],
-                [40.0] * len(rows_exo_h))
+    _write_3col(
+        d / "exoPrices.csv",
+        [r[0] for r in rows_exo_h],
+        [r[1] for r in rows_exo_h],
+        [40.0] * len(rows_exo_h),
+    )
 
     # vre_profiles: (area, vre, hour, load_factor) — 4 columns
     rows_vre = [(a, v, h) for a in AREAS for v in VRE for h in HOURS]
-    pd.DataFrame({
-        "a": [r[0] for r in rows_vre],
-        "vre": [r[1] for r in rows_vre],
-        "h": [r[2] for r in rows_vre],
-        "lf": [0.3] * len(rows_vre),
-    }).to_csv(d / "vre_profiles.csv", index=False, header=False)
+    pd.DataFrame(
+        {
+            "a": [r[0] for r in rows_vre],
+            "vre": [r[1] for r in rows_vre],
+            "h": [r[2] for r in rows_vre],
+            "lf": [0.3] * len(rows_vre),
+        }
+    ).to_csv(d / "vre_profiles.csv", index=False, header=False)
 
     # lake_inflows: (area, month, value)
     rows_am = [(a, m) for a in AREAS for m in MONTHS]
-    _write_3col(d / "lake_inflows.csv",
-                [r[0] for r in rows_am],
-                [r[1] for r in rows_am],
-                [1.0] * len(rows_am))
+    _write_3col(
+        d / "lake_inflows.csv",
+        [r[0] for r in rows_am],
+        [r[1] for r in rows_am],
+        [1.0] * len(rows_am),
+    )
 
     # ── Capacity ──
     # capa: (area, tec, value)
     rows_at = [(a, t) for a in AREAS for t in TEC]
-    _write_3col(d / "capa.csv",
-                [r[0] for r in rows_at],
-                [r[1] for r in rows_at],
-                [10.0] * len(rows_at))
+    _write_3col(
+        d / "capa.csv", [r[0] for r in rows_at], [r[1] for r in rows_at], [10.0] * len(rows_at)
+    )
 
     # capa_in: (area, sto, value)
     rows_as = [(a, s) for a in AREAS for s in STO]
-    _write_3col(d / "capa_in.csv",
-                [r[0] for r in rows_as],
-                [r[1] for r in rows_as],
-                [5.0] * len(rows_as))
+    _write_3col(
+        d / "capa_in.csv", [r[0] for r in rows_as], [r[1] for r in rows_as], [5.0] * len(rows_as)
+    )
 
     # stockMax: (area, sto, value)
-    _write_3col(d / "stockMax.csv",
-                [r[0] for r in rows_as],
-                [r[1] for r in rows_as],
-                [100.0] * len(rows_as))
+    _write_3col(
+        d / "stockMax.csv", [r[0] for r in rows_as], [r[1] for r in rows_as], [100.0] * len(rows_as)
+    )
 
     # yEAF, maxAF: (area, thr, value)
     rows_athr = [(a, t) for a in AREAS for t in THR]
-    _write_3col(d / "yEAF.csv",
-                [r[0] for r in rows_athr],
-                [r[1] for r in rows_athr],
-                [0.85] * len(rows_athr))
-    _write_3col(d / "maxAF.csv",
-                [r[0] for r in rows_athr],
-                [r[1] for r in rows_athr],
-                [0.95] * len(rows_athr))
+    _write_3col(
+        d / "yEAF.csv",
+        [r[0] for r in rows_athr],
+        [r[1] for r in rows_athr],
+        [0.85] * len(rows_athr),
+    )
+    _write_3col(
+        d / "maxAF.csv",
+        [r[0] for r in rows_athr],
+        [r[1] for r in rows_athr],
+        [0.95] * len(rows_athr),
+    )
 
     # nucMaxAF: (area, week, value)
     rows_aw = [(a, w) for a in AREAS for w in WEEKS]
-    _write_3col(d / "nucMaxAF.csv",
-                [r[0] for r in rows_aw],
-                [r[1] for r in rows_aw],
-                [0.9] * len(rows_aw))
+    _write_3col(
+        d / "nucMaxAF.csv", [r[0] for r in rows_aw], [r[1] for r in rows_aw], [0.9] * len(rows_aw)
+    )
 
     # hMaxOut, hMaxIn: (area, month, value)
-    _write_3col(d / "hMaxOut.csv",
-                [r[0] for r in rows_am],
-                [r[1] for r in rows_am],
-                [0.8] * len(rows_am))
-    _write_3col(d / "hMaxIn.csv",
-                [r[0] for r in rows_am],
-                [r[1] for r in rows_am],
-                [0.8] * len(rows_am))
+    _write_3col(
+        d / "hMaxOut.csv", [r[0] for r in rows_am], [r[1] for r in rows_am], [0.8] * len(rows_am)
+    )
+    _write_3col(
+        d / "hMaxIn.csv", [r[0] for r in rows_am], [r[1] for r in rows_am], [0.8] * len(rows_am)
+    )
 
     # ── Trade ──
     trade_pairs = [(a1, a2) for a1 in AREAS for a2 in AREAS if a1 != a2]
-    _write_3col(d / "links.csv",
-                [r[0] for r in trade_pairs],
-                [r[1] for r in trade_pairs],
-                [5.0] * len(trade_pairs))
+    _write_3col(
+        d / "links.csv",
+        [r[0] for r in trade_pairs],
+        [r[1] for r in trade_pairs],
+        [5.0] * len(trade_pairs),
+    )
 
     rows_exo_trade = [(a, ea) for a in AREAS for ea in EXO_AREAS]
-    _write_3col(d / "exo_IM.csv",
-                [r[0] for r in rows_exo_trade],
-                [r[1] for r in rows_exo_trade],
-                [3.0] * len(rows_exo_trade))
-    _write_3col(d / "exo_EX.csv",
-                [r[0] for r in rows_exo_trade],
-                [r[1] for r in rows_exo_trade],
-                [3.0] * len(rows_exo_trade))
+    _write_3col(
+        d / "exo_IM.csv",
+        [r[0] for r in rows_exo_trade],
+        [r[1] for r in rows_exo_trade],
+        [3.0] * len(rows_exo_trade),
+    )
+    _write_3col(
+        d / "exo_EX.csv",
+        [r[0] for r in rows_exo_trade],
+        [r[1] for r in rows_exo_trade],
+        [3.0] * len(rows_exo_trade),
+    )
 
     # rsv_req: (vre, value)
     _write_2col(d / "rsv_req.csv", VRE, [0.05] * len(VRE))
@@ -194,17 +196,21 @@ def input_dir(tmp_path):
 
     # fuel_timeFactor: (fuel, month, value)
     rows_fm = [(f, m) for f in fuels for m in MONTHS]
-    _write_3col(d / "fuel_timeFactor.csv",
-                [r[0] for r in rows_fm],
-                [r[1] for r in rows_fm],
-                [1.0] * len(rows_fm))
+    _write_3col(
+        d / "fuel_timeFactor.csv",
+        [r[0] for r in rows_fm],
+        [r[1] for r in rows_fm],
+        [1.0] * len(rows_fm),
+    )
 
     # fuel_areaFactor: (fuel, area, value)
     rows_fa = [(f, a) for f in fuels for a in AREAS]
-    _write_3col(d / "fuel_areaFactor.csv",
-                [r[0] for r in rows_fa],
-                [r[1] for r in rows_fa],
-                [0.0] * len(rows_fa))
+    _write_3col(
+        d / "fuel_areaFactor.csv",
+        [r[0] for r in rows_fa],
+        [r[1] for r in rows_fa],
+        [0.0] * len(rows_fa),
+    )
 
     # ── Storage ──
     _write_2col(d / "str_vOM.csv", STO, [0.5, 0.3])
@@ -273,18 +279,31 @@ class TestDefaultModel:
     def test_has_key_constraints(self, input_dir):
         model = build_default_model(input_dir)
         expected_constraints = [
-            "gene_vre_constraint", "gene_nmd_constraint",
-            "on_capa_constraint", "gene_on_hmax_constraint", "gene_on_hmin_constraint",
-            "yearly_maxON_constraint", "nuc_maxON_constraint",
-            "on_off_constraint", "cons_startup_constraint", "cons_turnoff_constraint",
+            "gene_vre_constraint",
+            "gene_nmd_constraint",
+            "on_capa_constraint",
+            "gene_on_hmax_constraint",
+            "gene_on_hmin_constraint",
+            "yearly_maxON_constraint",
+            "nuc_maxON_constraint",
+            "on_off_constraint",
+            "cons_startup_constraint",
+            "cons_turnoff_constraint",
             "ramping_up_constraint",
-            "stored_cap_constraint", "stor_in_constraint", "stor_out_constraint",
-            "storing_constraint", "lake_res_constraint",
-            "reserves_constraint", "no_FRR_contrib_constraint",
-            "trade_bal_constraint", "icIM_constraint",
-            "exoIM_constraint", "exoEX_constraint",
+            "stored_cap_constraint",
+            "stor_in_constraint",
+            "stor_out_constraint",
+            "storing_constraint",
+            "lake_res_constraint",
+            "reserves_constraint",
+            "no_FRR_contrib_constraint",
+            "trade_bal_constraint",
+            "icIM_constraint",
+            "exoIM_constraint",
+            "exoEX_constraint",
             "adequacy_constraint",
-            "hcost_constraint", "hcarb_constraint",
+            "hcost_constraint",
+            "hcarb_constraint",
         ]
         for name in expected_constraints:
             assert hasattr(model, name), f"Missing constraint: {name}"
@@ -399,73 +418,109 @@ class TestModelEdgeCases:
 
         # For cross-product CSVs, expand manually
         rows_ah = [(a, h) for a in areas for h in hours]
-        _write_3col(d / "demand.csv",
-                    [r[0] for r in rows_ah], [r[1] for r in rows_ah],
-                    [50.0] * len(rows_ah))
-        _write_3col(d / "nmd.csv",
-                    [r[0] for r in rows_ah], [r[1] for r in rows_ah],
-                    [5.0] * len(rows_ah))
+        _write_3col(
+            d / "demand.csv",
+            [r[0] for r in rows_ah],
+            [r[1] for r in rows_ah],
+            [50.0] * len(rows_ah),
+        )
+        _write_3col(
+            d / "nmd.csv", [r[0] for r in rows_ah], [r[1] for r in rows_ah], [5.0] * len(rows_ah)
+        )
 
         rows_exo_h = [(ea, h) for ea in exo_areas for h in hours]
-        _write_3col(d / "exoPrices.csv",
-                    [r[0] for r in rows_exo_h], [r[1] for r in rows_exo_h],
-                    [40.0] * len(rows_exo_h))
+        _write_3col(
+            d / "exoPrices.csv",
+            [r[0] for r in rows_exo_h],
+            [r[1] for r in rows_exo_h],
+            [40.0] * len(rows_exo_h),
+        )
 
         rows_vre = [(a, v, h) for a in areas for v in vre for h in hours]
-        pd.DataFrame({
-            "a": [r[0] for r in rows_vre], "vre": [r[1] for r in rows_vre],
-            "h": [r[2] for r in rows_vre], "lf": [0.3] * len(rows_vre),
-        }).to_csv(d / "vre_profiles.csv", index=False, header=False)
+        pd.DataFrame(
+            {
+                "a": [r[0] for r in rows_vre],
+                "vre": [r[1] for r in rows_vre],
+                "h": [r[2] for r in rows_vre],
+                "lf": [0.3] * len(rows_vre),
+            }
+        ).to_csv(d / "vre_profiles.csv", index=False, header=False)
 
         rows_am = [(a, m) for a in areas for m in months]
-        _write_3col(d / "lake_inflows.csv",
-                    [r[0] for r in rows_am], [r[1] for r in rows_am],
-                    [1.0] * len(rows_am))
+        _write_3col(
+            d / "lake_inflows.csv",
+            [r[0] for r in rows_am],
+            [r[1] for r in rows_am],
+            [1.0] * len(rows_am),
+        )
 
         rows_at = [(a, t) for a in areas for t in tec]
-        _write_3col(d / "capa.csv",
-                    [r[0] for r in rows_at], [r[1] for r in rows_at],
-                    [10.0] * len(rows_at))
+        _write_3col(
+            d / "capa.csv", [r[0] for r in rows_at], [r[1] for r in rows_at], [10.0] * len(rows_at)
+        )
 
         rows_as = [(a, s) for a in areas for s in sto]
-        _write_3col(d / "capa_in.csv",
-                    [r[0] for r in rows_as], [r[1] for r in rows_as],
-                    [5.0] * len(rows_as))
-        _write_3col(d / "stockMax.csv",
-                    [r[0] for r in rows_as], [r[1] for r in rows_as],
-                    [100.0] * len(rows_as))
+        _write_3col(
+            d / "capa_in.csv",
+            [r[0] for r in rows_as],
+            [r[1] for r in rows_as],
+            [5.0] * len(rows_as),
+        )
+        _write_3col(
+            d / "stockMax.csv",
+            [r[0] for r in rows_as],
+            [r[1] for r in rows_as],
+            [100.0] * len(rows_as),
+        )
 
         rows_athr = [(a, t) for a in areas for t in thr]
-        _write_3col(d / "yEAF.csv",
-                    [r[0] for r in rows_athr], [r[1] for r in rows_athr],
-                    [0.85] * len(rows_athr))
-        _write_3col(d / "maxAF.csv",
-                    [r[0] for r in rows_athr], [r[1] for r in rows_athr],
-                    [0.95] * len(rows_athr))
+        _write_3col(
+            d / "yEAF.csv",
+            [r[0] for r in rows_athr],
+            [r[1] for r in rows_athr],
+            [0.85] * len(rows_athr),
+        )
+        _write_3col(
+            d / "maxAF.csv",
+            [r[0] for r in rows_athr],
+            [r[1] for r in rows_athr],
+            [0.95] * len(rows_athr),
+        )
 
         rows_aw = [(a, w) for a in areas for w in weeks]
-        _write_3col(d / "nucMaxAF.csv",
-                    [r[0] for r in rows_aw], [r[1] for r in rows_aw],
-                    [0.9] * len(rows_aw))
+        _write_3col(
+            d / "nucMaxAF.csv",
+            [r[0] for r in rows_aw],
+            [r[1] for r in rows_aw],
+            [0.9] * len(rows_aw),
+        )
 
-        _write_3col(d / "hMaxOut.csv",
-                    [r[0] for r in rows_am], [r[1] for r in rows_am],
-                    [0.8] * len(rows_am))
-        _write_3col(d / "hMaxIn.csv",
-                    [r[0] for r in rows_am], [r[1] for r in rows_am],
-                    [0.8] * len(rows_am))
+        _write_3col(
+            d / "hMaxOut.csv",
+            [r[0] for r in rows_am],
+            [r[1] for r in rows_am],
+            [0.8] * len(rows_am),
+        )
+        _write_3col(
+            d / "hMaxIn.csv", [r[0] for r in rows_am], [r[1] for r in rows_am], [0.8] * len(rows_am)
+        )
 
         # No trade pairs for single area
-        pd.DataFrame(columns=["a", "b", "c"]).to_csv(
-            d / "links.csv", index=False, header=False)
+        pd.DataFrame(columns=["a", "b", "c"]).to_csv(d / "links.csv", index=False, header=False)
 
         rows_exo_trade = [(a, ea) for a in areas for ea in exo_areas]
-        _write_3col(d / "exo_IM.csv",
-                    [r[0] for r in rows_exo_trade], [r[1] for r in rows_exo_trade],
-                    [3.0] * len(rows_exo_trade))
-        _write_3col(d / "exo_EX.csv",
-                    [r[0] for r in rows_exo_trade], [r[1] for r in rows_exo_trade],
-                    [3.0] * len(rows_exo_trade))
+        _write_3col(
+            d / "exo_IM.csv",
+            [r[0] for r in rows_exo_trade],
+            [r[1] for r in rows_exo_trade],
+            [3.0] * len(rows_exo_trade),
+        )
+        _write_3col(
+            d / "exo_EX.csv",
+            [r[0] for r in rows_exo_trade],
+            [r[1] for r in rows_exo_trade],
+            [3.0] * len(rows_exo_trade),
+        )
 
         _write_2col(d / "rsv_req.csv", vre, [0.05] * len(vre))
         _write_2col(d / "efficiency.csv", thr, [0.45] * len(thr))
@@ -483,13 +538,19 @@ class TestModelEdgeCases:
         _write_2col(d / "fuel_price.csv", thr, [5.0] * len(thr))
 
         rows_fm = [(f, m) for f in fuels for m in months]
-        _write_3col(d / "fuel_timeFactor.csv",
-                    [r[0] for r in rows_fm], [r[1] for r in rows_fm],
-                    [1.0] * len(rows_fm))
+        _write_3col(
+            d / "fuel_timeFactor.csv",
+            [r[0] for r in rows_fm],
+            [r[1] for r in rows_fm],
+            [1.0] * len(rows_fm),
+        )
         rows_fa = [(f, a) for f in fuels for a in areas]
-        _write_3col(d / "fuel_areaFactor.csv",
-                    [r[0] for r in rows_fa], [r[1] for r in rows_fa],
-                    [0.0] * len(rows_fa))
+        _write_3col(
+            d / "fuel_areaFactor.csv",
+            [r[0] for r in rows_fa],
+            [r[1] for r in rows_fa],
+            [0.0] * len(rows_fa),
+        )
 
         _write_2col(d / "str_vOM.csv", sto, [0.3] * len(sto))
         _write_2col(d / "hour_month.csv", hours, [months[0]] * len(hours))

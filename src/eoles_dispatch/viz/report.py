@@ -3,18 +3,25 @@
 import webbrowser
 from pathlib import Path
 
-from .loaders import _load_metadata
 from .charts_inputs import (
-    chart_demand, chart_vre_profiles, chart_nmd, chart_exo_prices,
-    chart_nuclear_availability, chart_lake_inflows, chart_capacity_mix,
+    chart_capacity_mix,
+    chart_demand,
+    chart_exo_prices,
     chart_interconnections,
+    chart_lake_inflows,
+    chart_nmd,
+    chart_nuclear_availability,
+    chart_vre_profiles,
 )
 from .charts_outputs import (
-    chart_prices, html_price_overview,
-    chart_prices_validate, html_price_overview_validate,
-    chart_price_scatter, chart_production,
+    chart_price_scatter,
+    chart_prices,
+    chart_prices_validate,
+    chart_production,
+    html_price_overview,
+    html_price_overview_validate,
 )
-
+from .loaders import _load_metadata
 
 # ── Chart lists ──
 
@@ -66,7 +73,9 @@ def _render_charts(run_dir, chart_list, areas):
         if isinstance(result, str):
             parts.append(f'<div class="chart">{result}</div>')
         else:
-            parts.append(f'<div class="chart">{result.to_html(full_html=False, include_plotlyjs=False)}</div>')
+            parts.append(
+                f'<div class="chart">{result.to_html(full_html=False, include_plotlyjs=False)}</div>'
+            )
     return parts
 
 
@@ -101,19 +110,47 @@ def generate_report(run_dir, open_browser=True, validate=False):
     if has_outputs:
         other_output_parts = _render_charts(run_dir, output_charts, other_areas)
 
-    fr_input_html = "\n".join(fr_input_parts) if fr_input_parts else '<div class="no-data">No input data found.</div>'
-    fr_output_html = "\n".join(fr_output_parts) if fr_output_parts else '<div class="no-data">No output data — run not solved yet.</div>'
-    other_input_html = "\n".join(other_input_parts) if other_input_parts else '<div class="no-data">No input data found.</div>'
-    other_output_html = "\n".join(other_output_parts) if other_output_parts else '<div class="no-data">No output data — run not solved yet.</div>'
+    fr_input_html = (
+        "\n".join(fr_input_parts)
+        if fr_input_parts
+        else '<div class="no-data">No input data found.</div>'
+    )
+    fr_output_html = (
+        "\n".join(fr_output_parts)
+        if fr_output_parts
+        else '<div class="no-data">No output data — run not solved yet.</div>'
+    )
+    other_input_html = (
+        "\n".join(other_input_parts)
+        if other_input_parts
+        else '<div class="no-data">No input data found.</div>'
+    )
+    other_output_html = (
+        "\n".join(other_output_parts)
+        if other_output_parts
+        else '<div class="no-data">No output data — run not solved yet.</div>'
+    )
 
-    _MONTH_NAMES = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
-                    7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+    _MONTH_NAMES = {
+        1: "Jan",
+        2: "Feb",
+        3: "Mar",
+        4: "Apr",
+        5: "May",
+        6: "Jun",
+        7: "Jul",
+        8: "Aug",
+        9: "Sep",
+        10: "Oct",
+        11: "Nov",
+        12: "Dec",
+    }
     months_raw = meta.get("months")
     if months_raw:
         ms = str(months_raw)
         if "-" in ms:
             a, b = ms.split("-", 1)
-            months_label = f" · {_MONTH_NAMES.get(int(a),a)}–{_MONTH_NAMES.get(int(b),b)}"
+            months_label = f" · {_MONTH_NAMES.get(int(a), a)}–{_MONTH_NAMES.get(int(b), b)}"
         else:
             months_label = f" · {_MONTH_NAMES.get(int(ms), ms)} only"
     else:
@@ -135,7 +172,7 @@ def generate_report(run_dir, open_browser=True, validate=False):
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
-<title>EOLES-Dispatch — {meta.get('name', run_dir.name)}</title>
+<title>EOLES-Dispatch — {meta.get("name", run_dir.name)}</title>
 <style>
   :root {{
     --bg:       #fef6e4;
@@ -378,17 +415,17 @@ def generate_report(run_dir, open_browser=True, validate=False):
   <div class="header-top">
     <div>
       <h1>EOLES-Dispatch</h1>
-      <div class="subtitle">{meta.get('name', run_dir.name)}</div>
+      <div class="subtitle">{meta.get("name", run_dir.name)}</div>
     </div>
-    <span class="badge badge-{status}">{status}{(' · ' + exec_time) if exec_time else ''}</span>
+    <span class="badge badge-{status}">{status}{(" · " + exec_time) if exec_time else ""}</span>
   </div>
   <div class="meta-pills">
-    <div class="meta-pill">Scenario <b>{meta.get('scenario', '?')}</b></div>
-    <div class="meta-pill">Year <b>{meta.get('year', '?')}</b>{months_label}</div>
-    <div class="meta-pill">Areas <b>{', '.join(all_areas)}</b></div>
-    <div class="meta-pill">Solver: <b>{solver_info or 'N/A'}</b></div>
-    <div class="meta-pill">Created: <b>{meta.get('created', '?')[:16].replace('T', ' ')}</b></div>
-    {"<div class='meta-pill'>Solved: <b>" + meta.get('solved', '')[:16].replace('T', ' ') + "</b></div>" if meta.get('solved') else ""}
+    <div class="meta-pill">Scenario <b>{meta.get("scenario", "?")}</b></div>
+    <div class="meta-pill">Year <b>{meta.get("year", "?")}</b>{months_label}</div>
+    <div class="meta-pill">Areas <b>{", ".join(all_areas)}</b></div>
+    <div class="meta-pill">Solver: <b>{solver_info or "N/A"}</b></div>
+    <div class="meta-pill">Created: <b>{meta.get("created", "?")[:16].replace("T", " ")}</b></div>
+    {"<div class='meta-pill'>Solved: <b>" + meta.get("solved", "")[:16].replace("T", " ") + "</b></div>" if meta.get("solved") else ""}
   </div>
 </div>
 <div class="tabs">
@@ -409,7 +446,7 @@ def generate_report(run_dir, open_browser=True, validate=False):
 <div id="tab-other-out" class="tab-content">
 {other_output_html}
 </div>
-<div class="footer">EOLES-Dispatch &middot; {meta.get('name', run_dir.name)} &middot; {meta.get('created', '')[:10]}</div>
+<div class="footer">EOLES-Dispatch &middot; {meta.get("name", run_dir.name)} &middot; {meta.get("created", "")[:10]}</div>
 <script>
 function switchTab(id) {{
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));

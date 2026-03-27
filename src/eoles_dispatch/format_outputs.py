@@ -4,17 +4,16 @@ import datetime
 import logging
 import os
 import time
+from collections import defaultdict
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 
-from collections import defaultdict
+from .config import MODEL_TO_AGG, TRLOSS
 
-from .config import TRLOSS, MODEL_TO_AGG
+logger = logging.getLogger(__name__)
 
 
 def _ensure_output_dir(run_dir):
@@ -65,7 +64,7 @@ def report_prices(model, run_dir):
     n_hours = len(hours)
     data = {}
     for i, a in enumerate(areas):
-        data[a] = duals[i * n_hours:(i + 1) * n_hours]
+        data[a] = duals[i * n_hours : (i + 1) * n_hours]
 
     prices = pd.DataFrame(data, index=hours)
     prices.index.name = "hour"
@@ -103,8 +102,9 @@ def report_production(model, run_dir):
     areas = sorted(model.a)
     hours = sorted(model.h)
 
-    production = pd.DataFrame({"area": np.repeat(areas, len(hours), axis=0),
-                                "hour": hours * len(areas)})
+    production = pd.DataFrame(
+        {"area": np.repeat(areas, len(hours), axis=0), "hour": hours * len(areas)}
+    )
 
     # Aggregate generation using MODEL_TO_AGG: group model techs by agg name and sum
     agg_groups = defaultdict(lambda: np.zeros(n_rows))
@@ -141,10 +141,15 @@ def report_production(model, run_dir):
     production = production.set_index(["area", "hour"])
 
     # Join demand
-    demand = pd.read_csv(
-        Path(run_dir) / "inputs" / "demand.csv",
-        header=None, names=["area", "hour", "demand"],
-    ).set_index(["area", "hour"]).squeeze(axis=1)
+    demand = (
+        pd.read_csv(
+            Path(run_dir) / "inputs" / "demand.csv",
+            header=None,
+            names=["area", "hour", "demand"],
+        )
+        .set_index(["area", "hour"])
+        .squeeze(axis=1)
+    )
     production = production.join(demand)
     production.to_csv(output_dir / "production.csv", index=True)
 

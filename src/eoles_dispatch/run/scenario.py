@@ -55,7 +55,11 @@ def extract_scenario(scenario_path, areas, exo_areas, hour_month):
     # Installed capacity data
     def _read_melt(name, id_col, filter_areas):
         df = pd.melt(_read_scenario_table(scenario_path, name), id_vars=id_col, var_name="area")
-        return df[df["area"].isin(filter_areas)][["area", id_col, "value"]] if id_col != "area" else df[df["area"].isin(filter_areas)]
+        return (
+            df[df["area"].isin(filter_areas)][["area", id_col, "value"]]
+            if id_col != "area"
+            else df[df["area"].isin(filter_areas)]
+        )
 
     capa = _read_melt("capa", "tec", areas)
     maxAF = _read_melt("maxAF", "tec", areas)
@@ -64,34 +68,50 @@ def extract_scenario(scenario_path, areas, exo_areas, hour_month):
     stockMax = _read_melt("stockMax", "tec", areas)
 
     # Interconnections
-    links = pd.melt(_read_scenario_table(scenario_path, "links"), id_vars="exporter", var_name="importer")
-    links = links[(links["importer"].isin(areas)) & (links["exporter"].isin(areas))][["importer", "exporter", "value"]]
+    links = pd.melt(
+        _read_scenario_table(scenario_path, "links"), id_vars="exporter", var_name="importer"
+    )
+    links = links[(links["importer"].isin(areas)) & (links["exporter"].isin(areas))][
+        ["importer", "exporter", "value"]
+    ]
 
-    exo_EX = pd.melt(_read_scenario_table(scenario_path, "exo_EX"), id_vars="exporter", var_name="importer")
+    exo_EX = pd.melt(
+        _read_scenario_table(scenario_path, "exo_EX"), id_vars="exporter", var_name="importer"
+    )
     exo_EX = exo_EX[(exo_EX["exporter"].isin(areas)) & (exo_EX["importer"].isin(exo_areas))]
 
-    exo_IM = pd.melt(_read_scenario_table(scenario_path, "exo_IM"), id_vars="importer", var_name="exporter")
+    exo_IM = pd.melt(
+        _read_scenario_table(scenario_path, "exo_IM"), id_vars="importer", var_name="exporter"
+    )
     exo_IM = exo_IM[(exo_IM["importer"].isin(areas)) & (exo_IM["exporter"].isin(exo_areas))]
 
     # Fuel price seasonal weights (calendar months 1-12, mean=1 per fuel).
     # Expand to YYYYMM strings matching the simulation period.
     fuel_timeFactor_raw = pd.melt(
         _read_scenario_table(scenario_path, "fuel_timeFactor"),
-        id_vars="month", var_name="fuel",
+        id_vars="month",
+        var_name="fuel",
     )
     sim_months = hour_month["month"].unique()
-    sim_months_df = pd.DataFrame({
-        "yyyymm": sim_months,
-        "month": [int(m[-2:]) for m in sim_months],
-    })
+    sim_months_df = pd.DataFrame(
+        {
+            "yyyymm": sim_months,
+            "month": [int(m[-2:]) for m in sim_months],
+        }
+    )
     fuel_timeFactor = fuel_timeFactor_raw.merge(sim_months_df, on="month", how="inner")
-    fuel_timeFactor = fuel_timeFactor[["fuel", "yyyymm", "value"]].rename(columns={"yyyymm": "month"})
+    fuel_timeFactor = fuel_timeFactor[["fuel", "yyyymm", "value"]].rename(
+        columns={"yyyymm": "month"}
+    )
 
     fuel_areaFactor = pd.melt(
         _read_scenario_table(scenario_path, "fuel_areaFactor"),
-        id_vars="area", var_name="fuel",
+        id_vars="area",
+        var_name="fuel",
     )
-    fuel_areaFactor = fuel_areaFactor[fuel_areaFactor["area"].isin(areas)][["fuel", "area", "value"]]
+    fuel_areaFactor = fuel_areaFactor[fuel_areaFactor["area"].isin(areas)][
+        ["fuel", "area", "value"]
+    ]
 
     return {
         "thr_params": thr_params,
@@ -133,9 +153,19 @@ def xlsx_to_scenario(xlsx_path, output_dir=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sheets = [
-        "thr_specs", "rsv_req", "str_vOM", "capa", "maxAF", "yEAF",
-        "capa_in", "stockMax", "links", "exo_IM", "exo_EX",
-        "fuel_timeFactor", "fuel_areaFactor",
+        "thr_specs",
+        "rsv_req",
+        "str_vOM",
+        "capa",
+        "maxAF",
+        "yEAF",
+        "capa_in",
+        "stockMax",
+        "links",
+        "exo_IM",
+        "exo_EX",
+        "fuel_timeFactor",
+        "fuel_areaFactor",
     ]
     for sheet in sheets:
         df = pd.read_excel(xlsx_path, sheet_name=sheet)

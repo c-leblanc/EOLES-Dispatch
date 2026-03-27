@@ -34,9 +34,10 @@ Constants:
     NO_OFFSHORE         Landlocked countries (no offshore data).
 """
 
-import logging
 import io
+import logging
 from pathlib import Path
+
 import pandas as pd
 
 from ..config import DEFAULT_AREAS
@@ -55,8 +56,14 @@ NINJA_BASE_URL = "https://www.renewables.ninja/country_downloads/{iso2}"
 #   IT → "IT" (whole country). Matches ENTSO-E IT control area.
 #   UK → "GB" (Great Britain). Matches ENTSO-E GB bidding zone.
 NINJA_ISO2 = {
-    "FR": "FR", "BE": "BE", "DE": "DE", "CH": "CH",
-    "IT": "IT", "ES": "ES", "UK": "GB", "LU": "LU",
+    "FR": "FR",
+    "BE": "BE",
+    "DE": "DE",
+    "CH": "CH",
+    "IT": "IT",
+    "ES": "ES",
+    "UK": "GB",
+    "LU": "LU",
 }
 
 # File definitions: (our_name, url_filename_template)
@@ -83,9 +90,12 @@ def _download_ninja_csv(iso2, filename):
     url = f"{NINJA_BASE_URL.format(iso2=iso2)}/{filename.format(iso2=iso2)}"
     logger.info(f"  Downloading {url}")
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "EOLES-Dispatch/0.1 (energy model; +https://github.com)",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "EOLES-Dispatch/0.1 (energy model; +https://github.com)",
+            },
+        )
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read().decode("utf-8")
     except Exception as e:
@@ -94,7 +104,7 @@ def _download_ninja_csv(iso2, filename):
 
     # Skip comment lines (start with #)
     lines = raw.split("\n")
-    data_lines = [l for l in lines if not l.startswith('"#') and not l.startswith("#")]
+    data_lines = [line for line in lines if not line.startswith('"#') and not line.startswith("#")]
     csv_text = "\n".join(data_lines)
 
     df = pd.read_csv(io.StringIO(csv_text), parse_dates=["time"])
@@ -166,7 +176,7 @@ def collect_ninja(output_dir, areas=None):
 
         out_path = output_dir / f"{file_key}.csv"
         df.to_csv(out_path, index=False)
-        logger.info(f"  → {file_key}.csv ({len(df)} rows, {len(df.columns)-1} areas)")
+        logger.info(f"  → {file_key}.csv ({len(df)} rows, {len(df.columns) - 1} areas)")
 
     logger.info("=== Ninja collection complete ===")
     return output_dir

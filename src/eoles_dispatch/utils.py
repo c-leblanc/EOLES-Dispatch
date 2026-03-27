@@ -44,8 +44,9 @@ Deprecated (kept for backward compatibility):
 """
 
 from datetime import datetime
-import pandas as pd
 from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 # CET/CEST timezone used by ENTSO-E and the European electricity calendar.
 CET = ZoneInfo("Europe/Brussels")
@@ -109,6 +110,7 @@ def clip_to_range(series, start, end):
 
 # CET bounds
 
+
 def cet_year_bounds(year):
     """Return (utc_start, utc_end) for a CET calendar year.
 
@@ -142,12 +144,14 @@ def cet_week_bounds(year, week):
 
 # Conversions
 
+
 def to_posix_hours(dt_series):
     """Convert a datetime Series to POSIX hours (int, hours since 1970-01-01 UTC)."""
     return ((dt_series - datetime(1970, 1, 1)).dt.total_seconds() / 3600).astype(int)
 
 
 # Mappings
+
 
 def expected_hours(year):
     """Number of hours in a CET calendar year.
@@ -233,4 +237,3 @@ def compute_hour_mappings(simul_year, months=None):
     hour_week["week"] = hour_to_cet_week(hour_week["hour"])
 
     return hour_month, hour_week
-

@@ -41,8 +41,9 @@ Internal helpers:
 import logging
 from datetime import datetime
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +160,9 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
             chunk = result.iloc[lo:hi].copy()
             chunk = chunk.interpolate(method="linear")
             offset_in_chunk = gap_start - lo
-            result.iloc[gap_start:gap_start + gap_length] = (
-                chunk.iloc[offset_in_chunk:offset_in_chunk + gap_length].values
-            )
+            result.iloc[gap_start : gap_start + gap_length] = chunk.iloc[
+                offset_in_chunk : offset_in_chunk + gap_length
+            ].values
             logger.debug(f"  Gap at {gap_time} ({gap_hours}h): linear interpolation")
             if report:
                 report.add(variable, area, gap_time, gap_hours, "linear_interpolation")
@@ -176,7 +177,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                 offset = sign * hours_per_week
                 fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                 if fill is not None:
-                    result.iloc[gap_start:gap_start + gap_length] = fill.values
+                    result.iloc[gap_start : gap_start + gap_length] = fill.values
                     direction = "next" if sign > 0 else "previous"
                     method = f"weekly_analogue_{direction}"
                     logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week")
@@ -188,10 +189,12 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                     offset = sign * 2 * hours_per_week
                     fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                     if fill is not None:
-                        result.iloc[gap_start:gap_start + gap_length] = fill.values
+                        result.iloc[gap_start : gap_start + gap_length] = fill.values
                         direction = "next" if sign > 0 else "previous"
                         method = f"weekly_analogue_{direction}_±2"
-                        logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week (±2)")
+                        logger.info(
+                            f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week (±2)"
+                        )
                         filled = True
                         break
 
@@ -201,7 +204,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                 offset = sign * hours_per_year
                 fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                 if fill is not None:
-                    result.iloc[gap_start:gap_start + gap_length] = fill.values
+                    result.iloc[gap_start : gap_start + gap_length] = fill.values
                     direction = "next" if sign > 0 else "previous"
                     method = f"yearly_analogue_{direction}"
                     logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} year")
@@ -218,7 +221,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                     candidates.append(fill.values)
             if candidates:
                 avg = np.mean(candidates, axis=0)
-                result.iloc[gap_start:gap_start + gap_length] = avg
+                result.iloc[gap_start : gap_start + gap_length] = avg
                 method = f"multi_year_average_{len(candidates)}y"
                 logger.info(
                     f"  Gap at {gap_time} ({gap_hours}h): "
@@ -233,9 +236,9 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
             chunk = result.iloc[lo:hi].copy()
             interpolated = chunk.interpolate(method="linear")
             offset_in_chunk = gap_start - lo
-            result.iloc[gap_start:gap_start + gap_length] = (
-                interpolated.iloc[offset_in_chunk:offset_in_chunk + gap_length].values
-            )
+            result.iloc[gap_start : gap_start + gap_length] = interpolated.iloc[
+                offset_in_chunk : offset_in_chunk + gap_length
+            ].values
             method = "linear_interpolation_fallback"
             logger.warning(
                 f"  Gap at {gap_time} ({gap_hours}h): "
@@ -261,6 +264,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
 
 # ── Gap-fill report ──
 
+
 class Report:
     """Accumulates gap-filling operations and writes a summary CSV + text report."""
 
@@ -268,16 +272,19 @@ class Report:
         self.entries = []  # list of dicts
 
     def add(self, variable, area, gap_start, gap_hours, method, scaling_ratio=None):
-        self.entries.append({
-            "variable": variable,
-            "area": area,
-            "gap_start": str(gap_start),
-            "gap_end": str(gap_start + pd.Timedelta(hours=gap_hours))
-                if isinstance(gap_start, pd.Timestamp) else "",
-            "gap_hours": gap_hours,
-            "method": method,
-            "scaling_ratio": round(scaling_ratio, 4) if scaling_ratio is not None else "",
-        })
+        self.entries.append(
+            {
+                "variable": variable,
+                "area": area,
+                "gap_start": str(gap_start),
+                "gap_end": str(gap_start + pd.Timedelta(hours=gap_hours))
+                if isinstance(gap_start, pd.Timestamp)
+                else "",
+                "gap_hours": gap_hours,
+                "method": method,
+                "scaling_ratio": round(scaling_ratio, 4) if scaling_ratio is not None else "",
+            }
+        )
 
     def save(self, output_dir):
         """Write the report to output_dir/gap_fill_report.csv and .txt."""
@@ -289,7 +296,7 @@ class Report:
                 "===============\n\n"
                 "No missing values were detected. No gap-filling was needed.\n"
             )
-            logger.info(f"  → gap_fill_report.txt (no gaps)")
+            logger.info("  → gap_fill_report.txt (no gaps)")
             return
 
         output_dir = Path(output_dir)
@@ -347,6 +354,3 @@ class Report:
             f"  → gap_fill_report.csv ({total_gaps} entries), "
             f"gap_fill_report.txt ({int(total_hours)}h filled)"
         )
-
-
-

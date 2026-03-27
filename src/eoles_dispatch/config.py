@@ -15,13 +15,14 @@ Three technology nomenclature levels exist in the project:
 RAW_TO_AGG and MODEL_TO_AGG define the canonical mappings between levels.
 """
 
-import pandas as pd
 import os
 
+import pandas as pd
 
-#---------------------
+# ---------------------
 ## Loading Environment
-#---------------------
+# ---------------------
+
 
 def _load_dotenv():
     """Load environment variables from .env file if python-dotenv is installed.
@@ -30,36 +31,42 @@ def _load_dotenv():
     Silently skipped when running the model without the collect dependencies.
     """
     try:
-        from dotenv import load_dotenv, find_dotenv
+        from dotenv import find_dotenv, load_dotenv
+
         env_path = find_dotenv(usecwd=True)
         if env_path:
             load_dotenv(env_path)
     except ImportError:
         pass
 
+
 # Load environment variables at module import time
 _load_dotenv()
 
-#------------------
+# ------------------
 ## Model Parameters
-#------------------
+# ------------------
 
-LOAD_UNCERTAINTY = 0.01 # Uncertainty coefficient for hourly demand
-DELTA = 0.1 # Load variation factor
-VOLL = 15000 # Value of lost load in EUR/MWh (virtual cost of unserved demand)
-ETA_IN = pd.Series([0.95, 0.9], index=["lake_phs", "battery"]) # Charging efficiency of storage technologies
-ETA_OUT = pd.Series([0.9, 0.95], index=["lake_phs", "battery"]) # Discharging efficiency of storage technologies
-TRLOSS = 0.02 # Transportation loss applied to power trade
+LOAD_UNCERTAINTY = 0.01  # Uncertainty coefficient for hourly demand
+DELTA = 0.1  # Load variation factor
+VOLL = 15000  # Value of lost load in EUR/MWh (virtual cost of unserved demand)
+ETA_IN = pd.Series(
+    [0.95, 0.9], index=["lake_phs", "battery"]
+)  # Charging efficiency of storage technologies
+ETA_OUT = pd.Series(
+    [0.9, 0.95], index=["lake_phs", "battery"]
+)  # Discharging efficiency of storage technologies
+TRLOSS = 0.02  # Transportation loss applied to power trade
 
-#------------------
+# ------------------
 ## Unit conversions
-#------------------
+# ------------------
 
-GJ_MWH = 3.6 # Conversion factor from GJ to MWh
+GJ_MWH = 3.6  # Conversion factor from GJ to MWh
 
-#-----------------
+# -----------------
 ## Data Collection
-#-----------------
+# -----------------
 
 ENTSOE_API_KEY = os.environ.get("ENTSOE_API_KEY")
 
@@ -69,14 +76,26 @@ ENTSOE_API_KEY = os.environ.get("ENTSOE_API_KEY")
 ENTSOE_MIN_COVERAGE = 0.5
 
 
-#--------------------
+# --------------------
 ## Perimeter Settings
-#--------------------
+# --------------------
 
-DEFAULT_AREAS = ["FR", "BE", "DE", "CH", "IT", "ES", "UK"] # Default modeled areas
-DEFAULT_EXO_AREAS = ["NL", "DK1", "DK2", "SE4", "PL", "CZ", "AT", "GR", "SI", "PT", "IE"] # Default exogenous (non-modeled) areas
+DEFAULT_AREAS = ["FR", "BE", "DE", "CH", "IT", "ES", "UK"]  # Default modeled areas
+DEFAULT_EXO_AREAS = [
+    "NL",
+    "DK1",
+    "DK2",
+    "SE4",
+    "PL",
+    "CZ",
+    "AT",
+    "GR",
+    "SI",
+    "PT",
+    "IE",
+]  # Default exogenous (non-modeled) areas
 
-AREA_CODES = { # Matching to ENTSOE area codes
+AREA_CODES = {  # Matching to ENTSOE area codes
     "FR": "FR",
     "BE": "BE",
     "DE": "DE_LU",
@@ -123,10 +142,9 @@ AREA_CODES_PRICE = {
 # IT prices use IT_NORD (the reference price zone), not IT (which has no price).
 
 
-
-#----------------------------------
+# ----------------------------------
 ## Technology nomenclature mappings
-#----------------------------------
+# ----------------------------------
 
 # RAW_TO_AGG: raw (collected data) → agg (output/viz).
 #   Keys = column names in data/<year>/production_<area>.csv.
@@ -134,31 +152,31 @@ AREA_CODES_PRICE = {
 #   Also used to derive NMD_TYPES for compute_nmd().
 RAW_TO_AGG = {
     # Renewables
-    "solar":        "solar",
-    "onshore":      "wind",
-    "offshore":     "wind",
-    "river":        "river",
-    "lake":         "lake_phs",
+    "solar": "solar",
+    "onshore": "wind",
+    "offshore": "wind",
+    "river": "river",
+    "lake": "lake_phs",
     # Nuclear
-    "nuclear":      "nuclear",
+    "nuclear": "nuclear",
     # Thermal
-    "gas":          "gas",
-    "coal_gas":     "gas",
-    "hard_coal":    "coal",
-    "lignite":      "coal",
-    "oil":          "oil",
-    "oil_shale":    "oil",
-    "peat":         "nmd",
+    "gas": "gas",
+    "coal_gas": "gas",
+    "hard_coal": "coal",
+    "lignite": "coal",
+    "oil": "oil",
+    "oil_shale": "oil",
+    "peat": "nmd",
     # NMD (non-market-dependent)
-    "biomass":      "nmd",
-    "geothermal":   "nmd",
-    "marine":       "nmd",
-    "other_renew":  "nmd",
-    "waste":        "nmd",
-    "other":        "nmd",
+    "biomass": "nmd",
+    "geothermal": "nmd",
+    "marine": "nmd",
+    "other_renew": "nmd",
+    "waste": "nmd",
+    "other": "nmd",
     # Storage (hydro pumped storage)
-    "phs":          "lake_phs",
-    "phs_in":       "phs_in",       # negative at all levels
+    "phs": "lake_phs",
+    "phs_in": "phs_in",  # negative at all levels
 }
 
 # MODEL_TO_AGG: model (LP technologies) → agg (output/viz).
@@ -167,28 +185,25 @@ RAW_TO_AGG = {
 #   Used by format_outputs.py and viz/_theme.py.
 MODEL_TO_AGG = {
     # Thermal sub-types
-    "gas_ccgt1G":   "gas",
-    "gas_ccgt2G":   "gas",
-    "gas_ccgtSA":   "gas",
-    "gas_ocgtSA":   "gas",
-    "coal_1G":      "coal",
-    "coal_SA":      "coal",
-    "lignite":      "coal",
-    "oil_light":    "oil",
+    "gas_ccgt1G": "gas",
+    "gas_ccgt2G": "gas",
+    "gas_ccgtSA": "gas",
+    "gas_ocgtSA": "gas",
+    "coal_1G": "coal",
+    "coal_SA": "coal",
+    "lignite": "coal",
+    "oil_light": "oil",
     # VRE
-    "onshore":      "wind",
-    "offshore":     "wind",
+    "onshore": "wind",
+    "offshore": "wind",
     # Identity mappings (no sub-types)
-    "nuclear":      "nuclear",
-    "solar":        "solar",
-    "river":        "river",
-    "lake_phs":     "lake_phs",
-    "battery":      "battery",
-    "nmd":          "nmd",
+    "nuclear": "nuclear",
+    "solar": "solar",
+    "river": "river",
+    "lake_phs": "lake_phs",
+    "battery": "battery",
+    "nmd": "nmd",
 }
 
 # NMD fuel types, derived from RAW_TO_AGG (single source of truth).
 NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]
-
-
-

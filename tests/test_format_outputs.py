@@ -1,10 +1,8 @@
 """Tests for eoles_dispatch.format_outputs."""
 
 import numpy as np
-import pytest
 
 from eoles_dispatch.format_outputs import _safe_gene_values, _safe_var_values
-
 
 # ---------------------------------------------------------------------------
 # _safe_gene_values
@@ -47,9 +45,7 @@ class TestSafeGeneValues:
 
     def test_safe_gene_values_length(self):
         """Output length matches n_rows when technology exists."""
-        gene_vals = {
-            ("FR", "gas", i): float(i) for i in range(5)
-        }
+        gene_vals = {("FR", "gas", i): float(i) for i in range(5)}
         result = _safe_gene_values(gene_vals, "gas", 5)
         assert len(result) == 5
 

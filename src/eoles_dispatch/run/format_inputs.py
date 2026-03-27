@@ -7,18 +7,16 @@ and formats everything for the Pyomo model.
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from .compute import (
-    compute_nmd,
-    compute_vre_capacity_factors,
-    compute_nuclear_max_af,
-    compute_lake_inflows,
-    compute_hydro_limits,
-)
 from ..utils import to_posix_hours
-
+from .compute import (
+    compute_hydro_limits,
+    compute_lake_inflows,
+    compute_nmd,
+    compute_nuclear_max_af,
+    compute_vre_capacity_factors,
+)
 
 # ── Data loading from year-based storage ──
 
@@ -111,8 +109,7 @@ def load_ninja_var(data_dir, variable, areas, valid_hours):
             f"No data for '{variable}' in the requested period. "
             f"Run 'eoles-dispatch collect --source ninja' to download data."
         )
-    melted = pd.melt(df, id_vars=["hour"], value_vars=areas,
-                     var_name="area", value_name="value")
+    melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
     return melted[["area", "hour", "value"]]
 
 
@@ -137,9 +134,9 @@ def _filter_to_posix(df, valid_hours):
 # ── Main entry point: load all time-varying inputs ──
 
 
-def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
-                   hour_month, hour_week,
-                   actCF=False, rn_horizon="current"):
+def load_tv_inputs(
+    data_dir, simul_year, areas, exo_areas, hour_month, hour_week, actCF=False, rn_horizon="current"
+):
     """Load all time-varying inputs from year-based data and compute derived variables.
 
     This is the main data loading function called at run creation time.
@@ -165,23 +162,26 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
 
     # 1. Load raw data and filter to the simulation period
     production_raw = load_year_production(data_dir, simul_year, areas)
-    production = {
-        area: _filter_to_posix(df, valid_hours)
-        for area, df in production_raw.items()
-    }
+    production = {area: _filter_to_posix(df, valid_hours) for area, df in production_raw.items()}
 
     demand_raw = _load_year_csv(data_dir, simul_year, "demand.csv", areas)
     demand_filtered = _filter_to_posix(demand_raw, valid_hours)
     area_cols_demand = [c for c in areas if c in demand_filtered.columns]
     demand_filtered[area_cols_demand] = demand_filtered[area_cols_demand] / 1000  # MW → GW
-    demand = pd.melt(demand_filtered, id_vars=["hour"], value_vars=area_cols_demand,
-                     var_name="area", value_name="value")[["area", "hour", "value"]]
+    demand = pd.melt(
+        demand_filtered,
+        id_vars=["hour"],
+        value_vars=area_cols_demand,
+        var_name="area",
+        value_name="value",
+    )[["area", "hour", "value"]]
 
     exo_prices_raw = _load_year_csv(data_dir, simul_year, "exo_prices.csv", exo_areas)
     exo_filtered = _filter_to_posix(exo_prices_raw, valid_hours)
     exo_cols = [c for c in exo_areas if c in exo_filtered.columns]
-    exoPrices = pd.melt(exo_filtered, id_vars=["hour"], value_vars=exo_cols,
-                        var_name="area", value_name="value")[["area", "hour", "value"]]
+    exoPrices = pd.melt(
+        exo_filtered, id_vars=["hour"], value_vars=exo_cols, var_name="area", value_name="value"
+    )[["area", "hour", "value"]]
 
     # Load installed capacity (wide format: tec index, area columns, MW)
     icapa_path = data_dir / str(simul_year) / "installed_capacity.csv"
@@ -196,7 +196,9 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
     # 3. VRE capacity factors
     if actCF:
         vre_profiles = compute_vre_capacity_factors(
-            production, installed_capa, areas,
+            production,
+            installed_capa,
+            areas,
             technologies=["offshore", "onshore", "solar"],
         )
     else:
@@ -206,14 +208,18 @@ def load_tv_inputs(data_dir, simul_year, areas, exo_areas,
         offshore["tec"] = "offshore"
         onshore["tec"] = "onshore"
         solar["tec"] = "solar"
-        vre_profiles = pd.concat([
-            offshore[["area", "tec", "hour", "value"]],
-            onshore[["area", "tec", "hour", "value"]],
-            solar[["area", "tec", "hour", "value"]],
-        ])
+        vre_profiles = pd.concat(
+            [
+                offshore[["area", "tec", "hour", "value"]],
+                onshore[["area", "tec", "hour", "value"]],
+                solar[["area", "tec", "hour", "value"]],
+            ]
+        )
 
     # River CF: always from production, installed_capa used if available
-    river_cf = compute_vre_capacity_factors(production, installed_capa, areas, technologies=["river"])
+    river_cf = compute_vre_capacity_factors(
+        production, installed_capa, areas, technologies=["river"]
+    )
     vre_profiles = pd.concat([vre_profiles, river_cf])
 
     # 4. Derived monthly/weekly variables

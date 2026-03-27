@@ -4,18 +4,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from eoles_dispatch.collect.entsoe import ENTSOE_COL_NAMES, PRODUCTION_FUELS, col_matches, is_usable
+from eoles_dispatch.collect.gap_filling import Report, interpolate_gaps
 from eoles_dispatch.utils import (
-    resample_to_hourly,
     canonical_index,
     cet_year_bounds,
-    expected_hours,
-    to_UTC_hourly,
     clip_to_range,
+    expected_hours,
+    resample_to_hourly,
+    to_UTC_hourly,
 )
-from eoles_dispatch.collect.entsoe import col_matches, ENTSOE_COL_NAMES, PRODUCTION_FUELS
-from eoles_dispatch.collect.entsoe import is_usable
-from eoles_dispatch.collect.gap_filling import interpolate_gaps, Report
-
 
 # ── col_matches ──
 

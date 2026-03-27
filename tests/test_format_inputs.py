@@ -7,18 +7,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings, to_posix_hours, expected_hours
-from eoles_dispatch.run.compute import (
-    compute_nmd,
-    compute_vre_capacity_factors,
-    compute_nuclear_max_af,
-    compute_lake_inflows,
-    compute_hydro_limits,
-)
-from eoles_dispatch.run.format_inputs import load_ninja_var
 from eoles_dispatch.collect._main_collect import _validate_year
 from eoles_dispatch.run._main_run import _copy_actual_prices
-
+from eoles_dispatch.run.compute import (
+    compute_hydro_limits,
+    compute_lake_inflows,
+    compute_nmd,
+    compute_nuclear_max_af,
+    compute_vre_capacity_factors,
+)
+from eoles_dispatch.utils import (
+    CET,
+    cet_to_utc,
+    compute_hour_mappings,
+    expected_hours,
+    to_posix_hours,
+)
 
 # ---------------------------------------------------------------------------
 # cet_to_utc (now in timezone.py)
@@ -64,9 +68,23 @@ def _make_production(areas, n_hours=24, fuels=None):
     pre-filtered format expected by all compute_* functions.
     """
     if fuels is None:
-        fuels = ["biomass", "gas", "nuclear", "solar", "onshore", "offshore",
-                 "river", "lake", "phs", "phs_in", "geothermal",
-                 "marine", "other_renew", "waste", "other"]
+        fuels = [
+            "biomass",
+            "gas",
+            "nuclear",
+            "solar",
+            "onshore",
+            "offshore",
+            "river",
+            "lake",
+            "phs",
+            "phs_in",
+            "geothermal",
+            "marine",
+            "other_renew",
+            "waste",
+            "other",
+        ]
     result = {}
     rng = np.random.default_rng(42)
     hours_dt = pd.date_range("2021-01-01", periods=n_hours, freq="h")
@@ -125,8 +143,7 @@ class TestComputeVreCapacityFactors:
             {"FR": [1000.0]},  # MW
             index=pd.Index(["onshore"], name="tec"),
         )
-        cf = compute_vre_capacity_factors(production, capa, ["FR"],
-                                           technologies=["onshore"])
+        cf = compute_vre_capacity_factors(production, capa, ["FR"], technologies=["onshore"])
         assert list(cf.columns) == ["area", "tec", "hour", "value"]
 
 
@@ -134,16 +151,14 @@ class TestComputeRiverCf:
     def test_river_cf_bounded_zero_one(self):
         """River capacity factors must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=24)
-        cf = compute_vre_capacity_factors(production, None, ["FR"],
-                                          technologies=["river"])
+        cf = compute_vre_capacity_factors(production, None, ["FR"], technologies=["river"])
         assert cf["value"].min() >= 0.0
         assert cf["value"].max() <= 1.0
 
     def test_river_cf_peaks_at_one(self):
         """River CF should peak at 1.0 (normalized by max production when no capa given)."""
         production = _make_production(["FR"], n_hours=24)
-        cf = compute_vre_capacity_factors(production, None, ["FR"],
-                                          technologies=["river"])
+        cf = compute_vre_capacity_factors(production, None, ["FR"], technologies=["river"])
         assert cf["value"].max() == pytest.approx(1.0)
 
 
@@ -167,8 +182,9 @@ class TestComputeNuclearMaxAf:
 
     def test_nuclear_af_no_nuclear_full_availability(self):
         """Areas without nuclear data should get AF=1.0."""
-        production = _make_production(["CH"], n_hours=168,
-                                       fuels=["gas", "solar"])  # no nuclear column
+        production = _make_production(
+            ["CH"], n_hours=168, fuels=["gas", "solar"]
+        )  # no nuclear column
         _, hour_week = compute_hour_mappings(2021)
         nuc_af = compute_nuclear_max_af(production, None, ["CH"], hour_week)
         assert all(nuc_af["value"] == 1.0)
@@ -225,10 +241,12 @@ class TestFuelTimeFactorExpansion:
     @staticmethod
     def _expand_fuel_timefactor(fuel_tf_raw, sim_months):
         """Reproduce the expansion logic from extract_scenario."""
-        sim_months_df = pd.DataFrame({
-            "yyyymm": sim_months,
-            "month": [int(m[-2:]) for m in sim_months],
-        })
+        sim_months_df = pd.DataFrame(
+            {
+                "yyyymm": sim_months,
+                "month": [int(m[-2:]) for m in sim_months],
+            }
+        )
         merged = fuel_tf_raw.merge(sim_months_df, on="month", how="inner")
         return merged[["fuel", "yyyymm", "value"]].rename(columns={"yyyymm": "month"})
 
@@ -260,10 +278,7 @@ class TestFuelTimeFactorExpansion:
     def test_fuel_timefactor_mean_is_one(self):
         """Seasonal weights from baseline scenario average to ~1.0 per fuel."""
         baseline_path = (
-            Path(__file__).resolve().parents[1]
-            / "scenarios"
-            / "baseline"
-            / "fuel_timeFactor.csv"
+            Path(__file__).resolve().parents[1] / "scenarios" / "baseline" / "fuel_timeFactor.csv"
         )
         if not baseline_path.exists():
             pytest.skip("baseline scenario not available")
@@ -287,9 +302,7 @@ class TestHourMonthCetMapping:
         hour_posix = (
             pd.Timestamp("2020-02-29 23:00") - pd.Timestamp("1970-01-01")
         ).total_seconds() / 3600
-        hour_utc = pd.to_datetime(
-            hour_posix * 3600, unit="s", origin="1970-01-01", utc=True
-        )
+        hour_utc = pd.to_datetime(hour_posix * 3600, unit="s", origin="1970-01-01", utc=True)
         month_cet = hour_utc.tz_convert(CET).strftime("%Y%m")
         assert month_cet == "202003"
 
@@ -301,6 +314,7 @@ class TestHourMonthCetMapping:
     def test_compute_hour_mappings_full_year_length(self):
         """Full year mapping should have expected_hours entries."""
         from eoles_dispatch.utils import expected_hours
+
         hour_month, hour_week = compute_hour_mappings(2021)
         assert len(hour_month) == expected_hours(2021)
         assert len(hour_week) == expected_hours(2021)
@@ -407,6 +421,7 @@ class TestValidateYear:
 def _make_actual_prices_csv(year_dir, year, areas, n_hours=None):
     """Write a minimal actual_prices.csv with datetime hour strings."""
     from eoles_dispatch.utils import cet_year_bounds
+
     start, _ = cet_year_bounds(year)
     if n_hours is None:
         n_hours = expected_hours(year)

@@ -1,23 +1,27 @@
-import pytest
-import pandas as pd
-import numpy as np
 from pathlib import Path
-from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import pytest
+
 
 @pytest.fixture(scope="session")
 def project_root():
     """Return the project root directory."""
     return Path(__file__).resolve().parent.parent
 
+
 @pytest.fixture(scope="session")
 def areas():
     """Minimal 2-area list for fast tests."""
     return ["FR", "DE"]
 
+
 @pytest.fixture(scope="session")
 def exo_areas():
     """Minimal exogenous areas."""
     return ["NL", "AT"]
+
 
 @pytest.fixture
 def sample_hourly_series():

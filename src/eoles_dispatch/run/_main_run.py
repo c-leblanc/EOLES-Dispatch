@@ -16,12 +16,14 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+
 import yaml
 
 from ..collect._main_collect import collect_all
 from ..config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
 logger = logging.getLogger(__name__)
+
 
 def _copy_actual_prices(data_dir, run_dir, year, areas, months):
     """Copy historical day-ahead prices into runs/<name>/validation/.
@@ -32,9 +34,11 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
 
     Silently skips if actual_prices.csv does not exist.
     """
-    import pandas as pd
     from datetime import datetime
-    from ..utils import cet_year_bounds, cet_to_utc
+
+    import pandas as pd
+
+    from ..utils import cet_to_utc, cet_year_bounds
 
     src = data_dir / str(year) / "actual_prices.csv"
     if not src.exists():
@@ -81,12 +85,18 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
 
     # Check Renewables.ninja data
     ninja_dir = data_dir / "renewable_ninja"
-    ninja_files = ["solar.csv", "onshore_current.csv", "onshore_future.csv", "offshore_current.csv", "offshore_future.csv"]
+    ninja_files = [
+        "solar.csv",
+        "onshore_current.csv",
+        "onshore_future.csv",
+        "offshore_current.csv",
+        "offshore_future.csv",
+    ]
     ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
 
     if history_missing or ninja_missing:
         logger.info("Some necessary data is missing, launching data collection...")
-        collect_all(data_dir, year, year+1, areas=areas, exo_areas=exo_areas, source = "all")
+        collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="all")
         # Verify history data download succeeded
         if not year_dir.exists():
             if (data_dir / f"{year}_corrupt").exists():
@@ -103,7 +113,6 @@ def _ensure_data_available(data_dir, year, areas, exo_areas):
                 f"Missing files: {still_missing}. "
                 f"Check your internet connection, or provide the data manually in {ninja_dir}/"
             )
-        
 
 
 def create_run(
@@ -172,9 +181,9 @@ def create_run(
 
     # Format and save inputs
     # New flow: scenario first (needs hour_month), then tv_data (needs scenario_capa)
+    from ..utils import compute_hour_mappings
     from .format_inputs import load_tv_inputs, save_inputs
     from .scenario import extract_scenario
-    from ..utils import compute_hour_mappings
 
     logger.info("  Computing time mappings...")
     hour_month, hour_week = compute_hour_mappings(year, months=months)
@@ -184,9 +193,14 @@ def create_run(
 
     logger.info("  Loading time-varying data and computing derived variables...")
     tv_data = load_tv_inputs(
-        data_dir, year, areas, exo_areas,
-        hour_month, hour_week,
-        actCF=actCF, rn_horizon=rn_horizon,
+        data_dir,
+        year,
+        areas,
+        exo_areas,
+        hour_month,
+        hour_week,
+        actCF=actCF,
+        rn_horizon=rn_horizon,
     )
 
     logger.info("  Saving formatted inputs...")
@@ -213,8 +227,11 @@ def create_run(
         "exo_areas": exo_areas,
         "actCF": actCF,
         "rn_horizon": rn_horizon,
-        "months": f"{months[0]}-{months[1]}" if months and months[0] != months[1]
-                  else str(months[0]) if months else None,
+        "months": f"{months[0]}-{months[1]}"
+        if months and months[0] != months[1]
+        else str(months[0])
+        if months
+        else None,
         "created": datetime.now().isoformat(timespec="seconds"),
         "status": "created",
     }
@@ -249,7 +266,13 @@ def solve_run(
     import pyomo.environ  # noqa: F401 — registers solver plugins
     from pyomo.opt import SolverFactory
 
-    from ..format_outputs import report_prices, report_production, report_capa_on, report_FRtrade, write_log
+    from ..format_outputs import (
+        report_capa_on,
+        report_FRtrade,
+        report_prices,
+        report_production,
+        write_log,
+    )
     from ..models import MODEL_REGISTRY
 
     if reports is None:
@@ -275,7 +298,9 @@ def solve_run(
     # Build model
     build_model = MODEL_REGISTRY.get(version)
     if build_model is None:
-        raise ValueError(f"Unknown model version '{version}'. Choose from: {list(MODEL_REGISTRY.keys())}")
+        raise ValueError(
+            f"Unknown model version '{version}'. Choose from: {list(MODEL_REGISTRY.keys())}"
+        )
     logger.info(f"  Building model [{version}]...")
     model = build_model(run_dir)
 
@@ -287,13 +312,14 @@ def solve_run(
 
     # HiGHS-specific tuning for large LP models
     if solver == "highs":
-        opt.highs_options["solver"] = "ipm"          # Interior point method (faster on large LPs)
-        opt.highs_options["run_crossover"] = "on"     # Get a basic feasible solution for duals
+        opt.highs_options["solver"] = "ipm"  # Interior point method (faster on large LPs)
+        opt.highs_options["run_crossover"] = "on"  # Get a basic feasible solution for duals
 
     results = opt.solve(model, tee=True)
 
     # Check solver status
     from pyomo.opt import TerminationCondition
+
     tc = results.solver.termination_condition
     if tc not in (TerminationCondition.optimal, TerminationCondition.feasible):
         raise RuntimeError(

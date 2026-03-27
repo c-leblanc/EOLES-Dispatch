@@ -34,6 +34,7 @@ viz = [
 ]
 dev = [
     "pytest>=7.0",
+    "ruff>=0.4",
     "entsoe-py>=0.6",
     "python-dotenv>=0.19",
     "urllib3<2",
@@ -46,3 +47,13 @@ eoles-dispatch = "eoles_dispatch.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
