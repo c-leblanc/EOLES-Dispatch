@@ -119,8 +119,9 @@ def create_run(
     logger.info("  Saving formatted inputs...")
     save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)
 
-    # Copy historical prices for validation (if available)
+    # Copy historical prices and production for validation (if available)
     _copy_actual_prices(data_dir, run_dir, year, areas, months)
+    _copy_actual_production(data_dir, run_dir, year, areas, months)
 
     # Copy scenario into run directory for reproducibility
     scenario_copy_dir = run_dir / "scenario"
@@ -366,6 +367,79 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
     validation_dir = run_dir / "validation"
     validation_dir.mkdir(exist_ok=True)
     df.to_csv(validation_dir / "actual_prices.csv", index=False)
+
+
+def _copy_actual_production(data_dir, run_dir, year, areas, months):
+    """Copy historical generation data into runs/<name>/validation/.
+
+    Reads production_<area>.csv files from the year data directory, filters to
+    the requested areas and time period, aggregates raw technology columns to
+    the agg level (via RAW_TO_AGG), converts MW → GW, converts timestamps to
+    POSIX hours, and saves into validation/actual_production.csv.
+
+    Silently skips areas whose production file does not exist.
+    """
+    from datetime import datetime
+
+    import pandas as pd
+
+    from ..config import RAW_TO_AGG
+    from ..utils import cet_to_utc, cet_year_bounds
+
+    if months:
+        start_m, end_m = months
+        start = cet_to_utc(datetime(year, start_m, 1))
+        if end_m < 12:
+            end = cet_to_utc(datetime(year, end_m + 1, 1))
+        else:
+            end = cet_to_utc(datetime(year + 1, 1, 1))
+    else:
+        start, end = cet_year_bounds(year)
+
+    area_frames = []
+    for area in areas:
+        src = data_dir / str(year) / f"production_{area}.csv"
+        if not src.exists():
+            continue
+
+        df = pd.read_csv(src, parse_dates=["hour"])
+        df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+        if df.empty:
+            continue
+
+        # Aggregate raw columns → agg categories
+        agg_cols = {}
+        for raw_col, agg_name in RAW_TO_AGG.items():
+            if raw_col not in df.columns:
+                continue
+            if agg_name not in agg_cols:
+                agg_cols[agg_name] = df[raw_col].values.copy()
+            else:
+                agg_cols[agg_name] = agg_cols[agg_name] + df[raw_col].values
+
+        # Convert MW → GW
+        result = pd.DataFrame({"hour": df["hour"], "area": area})
+        for agg_name, vals in agg_cols.items():
+            result[agg_name] = vals / 1000.0
+
+        # Convert hour to POSIX hours (int)
+        result["hour"] = (
+            (result["hour"] - pd.Timestamp("1970-01-01")).dt.total_seconds() / 3600
+        ).astype(int)
+
+        area_frames.append(result)
+
+    if not area_frames:
+        return
+
+    combined = pd.concat(area_frames, ignore_index=True)
+    # Reorder columns: area, hour, then sorted agg columns
+    tec_cols = [c for c in combined.columns if c not in ("area", "hour")]
+    combined = combined[["area", "hour"] + tec_cols]
+
+    validation_dir = run_dir / "validation"
+    validation_dir.mkdir(exist_ok=True)
+    combined.to_csv(validation_dir / "actual_production.csv", index=False)
 
 
 def _ensure_data_available(data_dir, year, areas, exo_areas):

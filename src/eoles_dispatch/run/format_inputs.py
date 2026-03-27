@@ -18,7 +18,6 @@ from .compute import (
     compute_vre_capacity_factors,
 )
 
-
 # ── High-level entry points ──
 
 

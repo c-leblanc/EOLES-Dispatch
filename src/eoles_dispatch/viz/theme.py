@@ -126,13 +126,25 @@ _CLEAN_LAYOUT = dict(
         zeroline=False,
     ),
     legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
+        orientation="v",
+        x=1.02,
+        y=1,
+        xanchor="left",
+        yanchor="top",
         bgcolor="rgba(0,0,0,0)",
         font=dict(size=11, color="#a08050"),
     ),
-    margin=dict(l=55, r=20, t=55, b=40),
+    margin=dict(l=55, r=160, t=55, b=40),
+)
+
+LEGEND_BELOW = dict(
+    orientation="h",
+    yanchor="top",
+    y=-0.18,
+    xanchor="center",
+    x=0.5,
+    bgcolor="rgba(0,0,0,0)",
+    font=dict(size=11, color="#a08050"),
 )
 
 
@@ -140,7 +152,7 @@ def _apply_theme(fig, extra_top_margin=0, keep_legend=False):
     """Apply clean minimal theme to a figure."""
     layout = dict(_CLEAN_LAYOUT)
     if extra_top_margin:
-        layout["margin"] = dict(l=55, r=20, t=65 + extra_top_margin, b=40)
+        layout["margin"] = dict(l=55, r=160, t=65 + extra_top_margin, b=40)
     if keep_legend:
         del layout["legend"]
     fig.update_layout(**layout)

@@ -14,6 +14,10 @@ from .charts_inputs import (
     chart_vre_profiles,
 )
 from .charts_outputs import (
+    chart_energy_mix_annual,
+    chart_energy_mix_annual_validate,
+    chart_energy_mix_monthly,
+    chart_energy_mix_monthly_validate,
     chart_price_scatter,
     chart_prices,
     chart_prices_validate,
@@ -22,7 +26,6 @@ from .charts_outputs import (
     html_price_overview_validate,
 )
 from .loaders import _load_metadata
-
 
 # ── Main orchestrator ──
 
@@ -264,32 +267,61 @@ def generate_report(run_dir, open_browser=True, validate=False):
     transform: translateY(-1px);
   }}
 
+  .chart-raw {{
+    margin: 18px 0;
+  }}
+
   /* ── Price overview side-by-side ── */
   .price-overview {{
     display: flex;
-    align-items: stretch;
-    gap: 18px;
+    gap: 16px;
     margin: 18px 0;
+    min-height: 400px;
+    align-items: stretch;
   }}
   .price-overview-left {{
-    flex: 0 0 33.333%;
+    flex: 0 0 50%;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: 0 2px 0 rgba(255,255,255,0.7) inset, 0 3px 14px var(--shadow);
-    padding: 22px 24px;
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    overflow-y: auto;
+  }}
+  .price-overview-table {{
+    flex: 1;
+    overflow: auto;
   }}
   .price-overview-right {{
-    flex: 1 1 66.667%;
+    flex: 0 0 50%;
     min-width: 0;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: 0 2px 0 rgba(255,255,255,0.7) inset, 0 3px 14px var(--shadow);
-    padding: 14px 18px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+  }}
+  .price-overview-left > .section-title,
+  .price-overview-right > .section-title {{
+    margin: 0 0 8px 0;
+    flex-shrink: 0;
+  }}
+  .price-chart-wrapper {{
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+  }}
+  .price-chart-wrapper > div {{
+    width: 100%;
+    height: 100%;
+  }}
+  .price-chart-wrapper .plotly-graph-div {{
+    width: 100% !important;
+    height: 100% !important;
   }}
   .section-title {{
     font-size: 0.7rem;
@@ -304,11 +336,11 @@ def generate_report(run_dir, open_browser=True, validate=False):
   /* ── Stats table ── */
   .stats-table {{
     border-collapse: collapse;
-    font-size: 0.82rem;
+    font-size: 0.75rem;
     width: 100%;
   }}
   .stats-table th, .stats-table td {{
-    padding: 7px 14px;
+    padding: 4px 8px;
     text-align: center;
     border-bottom: 1px solid rgba(180,120,20,0.06);
   }}
@@ -335,6 +367,29 @@ def generate_report(run_dir, open_browser=True, validate=False):
   }}
   .stats-table tbody tr:hover {{
     background: rgba(180,120,20,0.04);
+  }}
+
+  /* ── Output sections ── */
+  .output-section {{
+    margin: 32px 0 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+  }}
+  .output-section h2 {{
+    margin: 0;
+    font-size: 0.72rem;
+    font-family: 'DM Mono', monospace;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }}
+  .chart-label {{
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
   }}
 
   /* ── No data ── */
@@ -442,34 +497,57 @@ _INPUT_CHARTS_OTHER = [
 ]
 
 _OUTPUT_CHARTS = [
-    ("price_overview", html_price_overview),
-    ("prices", chart_prices),
-    ("production", chart_production),
+    ("Prices", None),
+    ("", html_price_overview),
+    ("Energy Mix", None),
+    ("", chart_energy_mix_annual),
+    ("Prices — Details", None),
+    ("Spot price", chart_prices),
+    ("Energy Mix — Details", None),
+    ("Monthly breakdown", chart_energy_mix_monthly),
+    ("Dispatch", chart_production),
 ]
 
 _OUTPUT_CHARTS_VALIDATE = [
-    ("price_overview", html_price_overview_validate),
-    ("prices", chart_prices_validate),
-    ("price_scatter", chart_price_scatter),
-    ("production", chart_production),
+    ("Prices", None),
+    ("", html_price_overview_validate),
+    ("Energy Mix", None),
+    ("", chart_energy_mix_annual_validate),
+    ("Prices — Details", None),
+    ("Spot price", chart_prices_validate),
+    ("Simulated vs actual", chart_price_scatter),
+    ("Energy Mix — Details", None),
+    ("Monthly breakdown", chart_energy_mix_monthly_validate),
+    ("Dispatch", chart_production),
 ]
 
 
 def _render_charts(run_dir, chart_list, areas):
     """Render a list of charts to HTML divs.
 
-    Chart functions can return a Plotly figure or a raw HTML string.
+    Registry entries are (label, chart_fn) pairs.
+    - If chart_fn is None: label is a section header → renders an <h2> divider.
+    - Otherwise: label is an optional HTML chart title (shown if non-empty and
+      starts with an uppercase letter); chart_fn returns a Plotly figure or raw HTML.
     Plotly CDN is loaded once in the page <head>.
     """
     parts = []
-    for name, chart_fn in chart_list:
+    for label, chart_fn in chart_list:
+        if chart_fn is None:
+            parts.append(f'<div class="output-section"><h2>{label}</h2></div>')
+            continue
         result = chart_fn(run_dir, areas)
         if result is None:
             continue
+        title_html = (
+            f'<div class="chart-label">{label}</div>'
+            if label and label[0].isupper()
+            else ""
+        )
         if isinstance(result, str):
-            parts.append(f'<div class="chart">{result}</div>')
+            parts.append(f'<div class="chart-raw">{title_html}{result}</div>')
         else:
             parts.append(
-                f'<div class="chart">{result.to_html(full_html=False, include_plotlyjs=False)}</div>'
+                f'<div class="chart">{title_html}{result.to_html(full_html=False, include_plotlyjs=False)}</div>'
             )
     return parts

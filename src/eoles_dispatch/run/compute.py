@@ -10,7 +10,6 @@ import pandas as pd
 
 from ..config import ETA_IN, ETA_OUT, NMD_TYPES
 
-
 # ── Production and NMD computation ──
 
 

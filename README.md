@@ -293,7 +293,7 @@ Solve times depend heavily on the time horizon and available RAM:
 |---------|-------------------|----------------------------------|
 | 1 month (744h) | ~600K | ~5 min |
 | 3 months (2160h) | ~1.8M | ~45 min |
-| Full year (8760h) | ~7M | ~1 day |
+| Full year (8760h) | ~7M | ~9 hours |
 
 ## Acknowledgements
 
