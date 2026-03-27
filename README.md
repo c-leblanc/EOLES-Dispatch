@@ -132,18 +132,30 @@ EOLES-Dispatch/
 ├── src/eoles_dispatch/
 │   ├── __main__.py                 # CLI entry point
 │   ├── config.py                   # Model constants & default parameters
-│   ├── run.py                      # Run lifecycle (create, solve, list)
-│   ├── viz.py                      # Interactive HTML report generation
-│   ├── format_inputs.py            # Data loading & preprocessing
 │   ├── format_outputs.py           # Result extraction & export
 │   ├── utils.py                    # Utility functions
-│   ├── datacoll/                   # Data collection module
-│   │   ├── main_collect.py         # Data collection orchestrator
+│   ├── run/                        # Run orchestration module
+│   │   ├── __init__.py
+│   │   ├── _main_run.py            # Run lifecycle (create, solve, list)
+│   │   ├── format_inputs.py        # Data loading & preprocessing
+│   │   ├── compute.py              # Model building & solving
+│   │   └── scenario.py             # Scenario loading & management
+│   ├── collect/                    # Data collection module
+│   │   ├── __init__.py
+│   │   ├── _main_collect.py        # Data collection orchestrator
 │   │   ├── entsoe.py               # ENTSO-E API client
 │   │   ├── elexon.py               # Elexon BMRS API client (GB post-Brexit fallback)
 │   │   ├── rninja.py               # Renewables.ninja data fetching
 │   │   └── gap_filling.py          # Missing data gap-filling logic
+│   ├── viz/                        # Visualization module
+│   │   ├── __init__.py
+│   │   ├── report.py               # Interactive HTML report generation
+│   │   ├── charts_inputs.py        # Input visualization charts
+│   │   ├── charts_outputs.py       # Output visualization charts
+│   │   ├── loaders.py              # Data loading for visualization
+│   │   └── theme.py                # Plotly theme configuration
 │   └── models/
+│       ├── __init__.py
 │       ├── default.py              # Standard model (startup, ramping, part-load)
 │       └── static_thermal.py       # Simplified model (no thermal dynamics)
 ├── tests/                          # Test suite (pytest)

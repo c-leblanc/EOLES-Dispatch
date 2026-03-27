@@ -17,7 +17,6 @@ RAW_TO_AGG and MODEL_TO_AGG define the canonical mappings between levels.
 
 import pandas as pd
 import os
-from dotenv import load_dotenv, find_dotenv
 
 
 #---------------------
@@ -25,13 +24,18 @@ from dotenv import load_dotenv, find_dotenv
 #---------------------
 
 def _load_dotenv():
-    """Load environment variables from .env file.
+    """Load environment variables from .env file if python-dotenv is installed.
 
-    Searches for .env in the current directory and up to 3 parent directories.
+    python-dotenv is only required for the collect extra (ENTSO-E API key).
+    Silently skipped when running the model without the collect dependencies.
     """
-    env_path = find_dotenv(usecwd=True)
-    if env_path:
-        load_dotenv(env_path)
+    try:
+        from dotenv import load_dotenv, find_dotenv
+        env_path = find_dotenv(usecwd=True)
+        if env_path:
+            load_dotenv(env_path)
+    except ImportError:
+        pass
 
 # Load environment variables at module import time
 _load_dotenv()

@@ -8,15 +8,16 @@ import pandas as pd
 import pytest
 
 from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings, to_posix_hours, expected_hours
-from eoles_dispatch.inputs.compute import (
+from eoles_dispatch.run.compute import (
     compute_nmd,
     compute_vre_capacity_factors,
     compute_nuclear_max_af,
     compute_lake_inflows,
     compute_hydro_limits,
 )
-from eoles_dispatch.inputs.format_inputs import load_ninja_var
+from eoles_dispatch.run.format_inputs import load_ninja_var
 from eoles_dispatch.collect._main_collect import _validate_year
+from eoles_dispatch.run._main_run import _copy_actual_prices
 
 
 # ---------------------------------------------------------------------------
@@ -396,3 +397,77 @@ class TestValidateYear:
         is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
         assert not is_valid
         assert any("exo_prices.csv" in i for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# _copy_actual_prices (run._main_run)
+# ---------------------------------------------------------------------------
+
+
+def _make_actual_prices_csv(year_dir, year, areas, n_hours=None):
+    """Write a minimal actual_prices.csv with datetime hour strings."""
+    from eoles_dispatch.utils import cet_year_bounds
+    start, _ = cet_year_bounds(year)
+    if n_hours is None:
+        n_hours = expected_hours(year)
+    hours = pd.date_range(start, periods=n_hours, freq="h")
+    df = pd.DataFrame({"hour": hours, **{a: [55.0] * n_hours for a in areas}})
+    year_dir.mkdir(parents=True, exist_ok=True)
+    df.to_csv(year_dir / "actual_prices.csv", index=False)
+
+
+class TestCopyActualPrices:
+    def test_creates_validation_file(self, tmp_path):
+        """Should create validation/actual_prices.csv when source exists."""
+        year, areas = 2021, ["FR", "BE"]
+        data_dir = tmp_path / "data"
+        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
+        assert (run_dir / "validation" / "actual_prices.csv").exists()
+
+    def test_skips_silently_when_source_missing(self, tmp_path):
+        """Should not raise and should not create validation/ if source is absent."""
+        data_dir = tmp_path / "data"
+        (data_dir / "2021").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _copy_actual_prices(data_dir, run_dir, 2021, ["FR"], months=None)
+        assert not (run_dir / "validation").exists()
+
+    def test_hour_column_is_posix_int(self, tmp_path):
+        """Output hour column must be POSIX hours (int), not datetimes."""
+        year, areas = 2021, ["FR"]
+        data_dir = tmp_path / "data"
+        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
+        out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
+        assert pd.api.types.is_integer_dtype(out["hour"])
+
+    def test_filters_to_requested_areas(self, tmp_path):
+        """Output should only contain requested areas, not all areas in source."""
+        year = 2021
+        all_areas = ["FR", "BE", "DE"]
+        data_dir = tmp_path / "data"
+        _make_actual_prices_csv(data_dir / str(year), year, all_areas)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _copy_actual_prices(data_dir, run_dir, year, ["FR"], months=None)
+        out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
+        assert "FR" in out.columns
+        assert "BE" not in out.columns
+        assert "DE" not in out.columns
+
+    def test_filters_to_months(self, tmp_path):
+        """With months=(1, 3), output should cover only Jan-Mar hours."""
+        year, areas = 2021, ["FR"]
+        data_dir = tmp_path / "data"
+        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _copy_actual_prices(data_dir, run_dir, year, areas, months=(1, 3))
+        out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
+        assert len(out) < expected_hours(year)
