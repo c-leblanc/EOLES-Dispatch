@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings, to_posix_hours
+from eoles_dispatch.utils import cet_to_utc, CET, compute_hour_mappings, to_posix_hours, expected_hours
 from eoles_dispatch.inputs.compute import (
     compute_nmd,
     compute_vre_capacity_factors,
@@ -16,6 +16,7 @@ from eoles_dispatch.inputs.compute import (
     compute_hydro_limits,
 )
 from eoles_dispatch.inputs.format_inputs import load_ninja_var
+from eoles_dispatch.collect._main_collect import _validate_year
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +310,89 @@ class TestHourMonthCetMapping:
         hm_partial, _ = compute_hour_mappings(2021, months=(1, 3))
         assert len(hm_partial) < len(hm_full)
         assert set(hm_partial["month"].unique()) == {"202101", "202102", "202103"}
+
+
+# ---------------------------------------------------------------------------
+# _validate_year (collect._main_collect)
+# ---------------------------------------------------------------------------
+
+
+def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True):
+    """Create a minimal valid year directory for _validate_year tests."""
+    n = expected_hours(year)
+    hours = list(range(n))
+
+    pd.DataFrame({"hour": hours, **{a: [1000.0] * n for a in areas}}).to_csv(
+        tmp_path / "demand.csv", index=False
+    )
+    pd.DataFrame({"hour": hours, **{a: [50.0] * n for a in exo_areas}}).to_csv(
+        tmp_path / "exo_prices.csv", index=False
+    )
+    fuels = ["biomass", "gas", "nuclear", "solar", "onshore"]
+    for area in areas:
+        pd.DataFrame({"hour": hours, **{f: [100.0] * n for f in fuels}}).to_csv(
+            tmp_path / f"production_{area}.csv", index=False
+        )
+    if include_actual_prices:
+        pd.DataFrame({"hour": hours, **{a: [55.0] * n for a in areas}}).to_csv(
+            tmp_path / "actual_prices.csv", index=False
+        )
+
+
+class TestValidateYear:
+    def test_valid_year_passes(self, tmp_path):
+        """A complete, correctly-sized year directory passes validation."""
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert is_valid
+        assert issues == []
+
+    def test_missing_demand_fails(self, tmp_path):
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        (tmp_path / "demand.csv").unlink()
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert not is_valid
+        assert any("demand.csv" in i for i in issues)
+
+    def test_missing_actual_prices_does_not_fail(self, tmp_path):
+        """actual_prices.csv is soft validation: missing should not block."""
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas, include_actual_prices=False)
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert is_valid
+        assert issues == []
+
+    def test_missing_production_file_fails(self, tmp_path):
+        areas, exo_areas = ["FR", "BE"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        (tmp_path / "production_BE.csv").unlink()
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert not is_valid
+        assert any("production_BE.csv" in i for i in issues)
+
+    def test_wrong_row_count_fails(self, tmp_path):
+        """A demand.csv with incorrect row count is flagged."""
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        n_wrong = expected_hours(2021) - 10
+        pd.DataFrame({"hour": list(range(n_wrong)), "FR": [1000.0] * n_wrong}).to_csv(
+            tmp_path / "demand.csv", index=False
+        )
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert not is_valid
+        assert any("demand.csv" in i for i in issues)
+
+    def test_missing_exo_area_in_prices_fails(self, tmp_path):
+        """exo_prices.csv missing an exo area column is flagged."""
+        areas, exo_areas = ["FR"], ["CH", "NO"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        # Overwrite exo_prices.csv with only one of the two exo areas
+        n = expected_hours(2021)
+        pd.DataFrame({"hour": list(range(n)), "CH": [50.0] * n}).to_csv(
+            tmp_path / "exo_prices.csv", index=False
+        )
+        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
+        assert not is_valid
+        assert any("exo_prices.csv" in i for i in issues)

@@ -95,6 +95,8 @@ def set_client():
     Raises EnvironmentError if the key is missing, or RuntimeError if the test
     query fails (wrong key, network issue, etc.).
     """
+    print("Validating ENTSO-E API key...", end='', flush=True)
+
     if not ENTSOE_API_KEY:
         raise EnvironmentError(
             "ENTSOE_API_KEY environment variable not set.\n"
@@ -120,15 +122,15 @@ def set_client():
         test_end = pd.Timestamp("2023-01-01T01:00:00", tz="Europe/Brussels")
         result = client.query_load("FR", start=test_start, end=test_end)
         if result is None or (hasattr(result, "__len__") and len(result) == 0):
-            raise RuntimeError("ENTSO-E returned empty data for the test query")
+            raise RuntimeError("Failed: ENTSO-E returned empty data for the test query")
     except Exception as e:
         raise RuntimeError(
-            f"ENTSO-E API key validation failed: {e}\n"
+            f"Failed: {e}\n"
             "Check that your ENTSOE_API_KEY is correct and that "
             "https://transparency.entsoe.eu/ is reachable."
         ) from e
 
-    logger.info("ENTSO-E API key validated successfully")
+    logger.info("OK")
     return client
 
 def is_usable(series, start, end):

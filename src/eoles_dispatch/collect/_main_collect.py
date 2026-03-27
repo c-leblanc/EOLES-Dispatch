@@ -106,7 +106,6 @@ def collect_all(
     if source in ("all", "entsoe"):
         logger.info("=== STARTING DOWNLOADING HISTORY DATA ===")
         # Validate API key upfront (fail fast before starting a long run)
-        logger.info("Validating ENTSO-E API key")
         client = entsoe.set_client()
 
         for year in range(start_year, end_year):
@@ -267,22 +266,22 @@ def collect_demand(client, areas, start, end, gap_report, canon_idx):
     frames = {}
     for area in areas:
         series = None
-
+        print(f"Demand {area}... ", end='', flush=True)
         # Try ENTSO-E first
         entsoe_partial = None
         try:
             raw = entsoe.fetch_demand(client, area, start, end)
             if raw is not None and entsoe.is_usable(raw, start, end):
                 series = raw
-                logger.info(f"Downloaded demand for {area} from ENTSO-E")
+                logger.info(f"downloaded from ENTSO-E (OK)")
             elif area == "UK" and raw is not None:
-                logger.info(f"Partially downloaded demand for {area} from ENTSO-E, filling gaps with Elexon")
+                print(f"partially downloaded demand from ENTSO-E, filling gaps with Elexon... ", end='', flush=True)
                 entsoe_partial = raw
         except Exception as e:
             if area == "UK":
-                logger.info(f"ENTSO-E unavailable for UK, falling back to Elexon")
+                print(f"no data at ENTSO-E, try Elexon... ", end='', flush=True)
             else:
-                logger.warning(f"Failed to download demand for {area}: {e}")
+                logger.warning(f"Failed (KO)\nERROR:{e}")
                 continue
 
         # Elexon fallback for UK: fill gaps in partial ENTSO-E data
@@ -294,15 +293,15 @@ def collect_demand(client, areas, start, end, gap_report, canon_idx):
                         series = entsoe_partial.combine_first(elexon_demand)
                     else:
                         series = elexon_demand
-                logger.info(f"Completed demand for {area} from Elexon")    
+                logger.info(f"completed from Elexon (OK)")    
             except Exception as e:
-                logger.warning(f"Elexon fallback also failed for {area} demand: {e}")
+                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
             # If Elexon also failed, use whatever ENTSO-E partial data we have
             if series is None and entsoe_partial is not None:
                 series = entsoe_partial
 
         if series is None:
-            logger.warning(f"No demand data available for {area}")
+            logger.warning(f"no data available (KO)")
             continue
 
         series = series.reindex(canon_idx)
@@ -338,6 +337,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
     for area in areas:
         production_df = None
         entsoe_usable = False
+        print(f"Production {area}... ", end='', flush=True)
 
         # Try ENTSO-E first
         try:
@@ -346,12 +346,12 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                 n_expected = expected_hours(start.year)
                 if len(production_df) > n_expected * ENTSOE_MIN_COVERAGE:
                     entsoe_usable = True
-                    logger.info(f"Downloaded production for {area} from ENTSO-E")
+                    logger.info(f"downloaded from ENTSO-E (OK)")
         except Exception as e:
             if area == "UK":
-                logger.info(f"ENTSO-E unavailable for UK ({e}), falling back to Elexon")
+                logger.info(f"no data at ENTSO-E, try Elexon... ")
             else:
-                logger.warning(f"Failed to download production for {area}: {e}")
+                logger.warning(f"Failed (KO)\nERROR:{e}")
                 continue
 
         # Elexon fallback for UK
@@ -367,9 +367,9 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                         production_df = merged.reset_index()
                     else:
                         production_df = elexon_df
-                    logger.info(f"Completed production for {area} from Elexon")
+                    logger.info(f"completed from Elexon (OK)")   
             except Exception as e:
-                logger.warning(f"Elexon fallback also failed for UK production: {e}")
+                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
 
         if production_df is not None and len(production_df) > 0:
             # Reindex onto canonical index, then gap-fill each fuel column
@@ -402,30 +402,32 @@ def collect_installed_capacity(client, areas, year, out_dir):
     rows = []
     for area in areas:
         capa = None
+        print(f"Installed capacity {area}... ", end='', flush=True)
 
         # Try ENTSO-E
         try:
             capa = entsoe.fetch_installed_capacity(client, area, year)
             if capa:
-                logger.info(f"  {area}: installed capacity from ENTSO-E ({len(capa)} fuel types)")
+                logger.info(f"from ENTSO-E ({len(capa)} fuel types) (OK)")
         except Exception as e:
             if area != "UK":
-                logger.warning(f"  Failed to fetch installed capacity for {area}: {e}")
+                logger.warning(f"Failed (KO)\nERROR: {e}")
 
         # Elexon fallback for UK
         if not capa and area == "UK":
             try:
+                print(f"try Elexon... ", end='', flush=True)
                 capa = elexon.fetch_installed_capacity(year)
                 if capa:
-                    logger.info(f"  {area}: installed capacity from Elexon ({len(capa)} fuel types)")
+                    logger.info(f"from Elexon ({len(capa)} fuel types) (OK)")
             except Exception as e:
-                logger.warning(f"  Elexon fallback also failed for {area} installed capacity: {e}")
+                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
 
         if capa:
             for tec, mw in capa.items():
                 rows.append({"area": area, "tec": tec, "value": mw})
         else:
-            logger.warning(f"  No installed capacity data for {area}")
+            logger.warning(f"no data available (KO)")
 
     long = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["area", "tec", "value"])
     df = long.pivot(index="tec", columns="area", values="value").fillna(0)
@@ -454,17 +456,18 @@ def collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx):
     """
     frames = {}
     for area in exo_areas:
-        logger.info(f"Downloading prices for {area}")
+        print(f"Exogenous prices {area}... ", end='', flush=True)
         try:
             prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
             if prices is None:
-                logger.warning(f"No price data returned for {area}")
+                logger.warning(f"no data available (KO)")
                 continue
             prices = prices.reindex(canon_idx)
             prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="exo_price", area=area)
             frames[area] = prices
+            logger.info(f"downloaded (OK)")
         except Exception as e:
-            logger.warning(f"Failed to download prices for {area}: {e}")
+            logger.warning(f"Failed (KO)\nERROR: {e}")
             continue
 
     df = pd.DataFrame(frames)
@@ -492,17 +495,18 @@ def collect_actual_prices(client, areas, start, end, gap_report, canon_idx):
     """
     frames = {}
     for area in areas:
-        logger.info(f"Downloading actual prices for {area}")
+        print(f"Actual prices {area}... ", end='', flush=True)
         try:
             prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
             if prices is None:
-                logger.warning(f"No actual price data returned for {area}")
+                logger.warning(f"no data available (KO)")
                 continue
             prices = prices.reindex(canon_idx)
             prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="actual_price", area=area)
             frames[area] = prices
+            logger.info(f"downloaded (OK)")
         except Exception as e:
-            logger.warning(f"Failed to download actual prices for {area}: {e}")
+            logger.warning(f"Failed (KO)\nERROR: {e}")
             continue
 
     df = pd.DataFrame(frames)
