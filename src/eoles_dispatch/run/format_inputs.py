@@ -18,120 +18,8 @@ from .compute import (
     compute_vre_capacity_factors,
 )
 
-# ── Data loading from year-based storage ──
 
-
-def load_year_production(data_dir, year, areas):
-    """Load raw production data for all areas from data/<year>/production_<area>.csv.
-
-    Args:
-        data_dir: Path to the data/ directory.
-        year: The simulation year.
-        areas: List of area codes.
-
-    Returns:
-        dict {area: pd.DataFrame} with columns ['hour', fuel1, fuel2, ...].
-        Values in MW. 'hour' is a UTC tz-naive datetime.
-    """
-    year_dir = Path(data_dir) / str(year)
-    if not year_dir.exists():
-        raise FileNotFoundError(
-            f"Data for year {year} not found at {year_dir}. "
-            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
-        )
-
-    result = {}
-    for area in areas:
-        prod_path = year_dir / f"production_{area}.csv"
-        if not prod_path.exists():
-            raise FileNotFoundError(
-                f"Production data for {area} not found at {prod_path}. "
-                f"Re-run 'eoles-dispatch collect --start {year} --end {year + 1}'."
-            )
-        df = pd.read_csv(prod_path)
-        df["hour"] = pd.to_datetime(df["hour"])
-        result[area] = df
-
-    return result
-
-
-def _load_year_csv(data_dir, year, filename, areas_or_exo):
-    """Load a year-based CSV file (demand.csv or exo_prices.csv).
-
-    Args:
-        data_dir: Path to the data/ directory.
-        year: The simulation year.
-        filename: CSV filename (e.g. "demand.csv").
-        areas_or_exo: List of area columns to extract.
-
-    Returns:
-        pd.DataFrame with columns ['hour', area1, area2, ...].
-        'hour' is a UTC tz-naive datetime.
-    """
-    year_dir = Path(data_dir) / str(year)
-    csv_path = year_dir / filename
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"{filename} not found at {csv_path}. "
-            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
-        )
-    df = pd.read_csv(csv_path)
-    df["hour"] = pd.to_datetime(df["hour"])
-    return df
-
-
-def load_ninja_var(data_dir, variable, areas, valid_hours):
-    """Load a Renewable Ninja capacity factor variable.
-
-    Reads from data/renewable_ninja/<variable>.csv and filters to the
-    requested hours.
-
-    Args:
-        data_dir: Path to the data/ directory.
-        variable: Ninja variable name (e.g. "offshore_current").
-        areas: List of area codes.
-        valid_hours: Set or array of POSIX hours to keep.
-
-    Returns:
-        DataFrame with columns ['area', 'hour', 'value'] (POSIX hours).
-    """
-    csv_path = Path(data_dir) / "renewable_ninja" / f"{variable}.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"Renewable Ninja data not found at {csv_path}. "
-            f"Run 'eoles-dispatch collect --source ninja' to download."
-        )
-    df = pd.read_csv(csv_path)
-    df["hour"] = to_posix_hours(pd.to_datetime(df["hour"]))
-    df = df[df["hour"].isin(valid_hours)]
-    if df.empty:
-        raise ValueError(
-            f"No data for '{variable}' in the requested period. "
-            f"Run 'eoles-dispatch collect --source ninja' to download data."
-        )
-    melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
-    return melted[["area", "hour", "value"]]
-
-
-# ── Filtering helper ──
-
-
-def _filter_to_posix(df, valid_hours):
-    """Filter a raw CSV DataFrame to valid_hours and convert 'hour' to POSIX hours.
-
-    Args:
-        df: DataFrame with a datetime 'hour' column.
-        valid_hours: Set of POSIX hours to keep.
-
-    Returns:
-        Filtered DataFrame with 'hour' as POSIX int.
-    """
-    df = df.copy()
-    df["hour"] = to_posix_hours(df["hour"])
-    return df[df["hour"].isin(valid_hours)]
-
-
-# ── Main entry point: load all time-varying inputs ──
+# ── High-level entry points ──
 
 
 def load_tv_inputs(
@@ -261,9 +149,6 @@ def load_tv_inputs(
     }
 
 
-# ── Save formatted inputs ──
-
-
 def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
     """Save all formatted inputs as CSVs to the run's input directory."""
     input_dir = Path(run_dir) / "inputs"
@@ -289,3 +174,116 @@ def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
     # Save area lists
     pd.DataFrame(areas).to_csv(input_dir / "areas.csv", index=False, header=False)
     pd.DataFrame(exo_areas).to_csv(input_dir / "exo_areas.csv", index=False, header=False)
+
+
+# ── Data loaders and helpers ──
+
+
+def load_year_production(data_dir, year, areas):
+    """Load raw production data for all areas from data/<year>/production_<area>.csv.
+
+    Args:
+        data_dir: Path to the data/ directory.
+        year: The simulation year.
+        areas: List of area codes.
+
+    Returns:
+        dict {area: pd.DataFrame} with columns ['hour', fuel1, fuel2, ...].
+        Values in MW. 'hour' is a UTC tz-naive datetime.
+    """
+    year_dir = Path(data_dir) / str(year)
+    if not year_dir.exists():
+        raise FileNotFoundError(
+            f"Data for year {year} not found at {year_dir}. "
+            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
+        )
+
+    result = {}
+    for area in areas:
+        prod_path = year_dir / f"production_{area}.csv"
+        if not prod_path.exists():
+            raise FileNotFoundError(
+                f"Production data for {area} not found at {prod_path}. "
+                f"Re-run 'eoles-dispatch collect --start {year} --end {year + 1}'."
+            )
+        df = pd.read_csv(prod_path)
+        df["hour"] = pd.to_datetime(df["hour"])
+        result[area] = df
+
+    return result
+
+
+def _load_year_csv(data_dir, year, filename, areas_or_exo):
+    """Load a year-based CSV file (demand.csv or exo_prices.csv).
+
+    Args:
+        data_dir: Path to the data/ directory.
+        year: The simulation year.
+        filename: CSV filename (e.g. "demand.csv").
+        areas_or_exo: List of area columns to extract.
+
+    Returns:
+        pd.DataFrame with columns ['hour', area1, area2, ...].
+        'hour' is a UTC tz-naive datetime.
+    """
+    year_dir = Path(data_dir) / str(year)
+    csv_path = year_dir / filename
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"{filename} not found at {csv_path}. "
+            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
+        )
+    df = pd.read_csv(csv_path)
+    df["hour"] = pd.to_datetime(df["hour"])
+    return df
+
+
+def load_ninja_var(data_dir, variable, areas, valid_hours):
+    """Load a Renewable Ninja capacity factor variable.
+
+    Reads from data/renewable_ninja/<variable>.csv and filters to the
+    requested hours.
+
+    Args:
+        data_dir: Path to the data/ directory.
+        variable: Ninja variable name (e.g. "offshore_current").
+        areas: List of area codes.
+        valid_hours: Set or array of POSIX hours to keep.
+
+    Returns:
+        DataFrame with columns ['area', 'hour', 'value'] (POSIX hours).
+    """
+    csv_path = Path(data_dir) / "renewable_ninja" / f"{variable}.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"Renewable Ninja data not found at {csv_path}. "
+            f"Run 'eoles-dispatch collect --source ninja' to download."
+        )
+    df = pd.read_csv(csv_path)
+    df["hour"] = to_posix_hours(pd.to_datetime(df["hour"]))
+    df = df[df["hour"].isin(valid_hours)]
+    if df.empty:
+        raise ValueError(
+            f"No data for '{variable}' in the requested period. "
+            f"Run 'eoles-dispatch collect --source ninja' to download data."
+        )
+    melted = pd.melt(df, id_vars=["hour"], value_vars=areas, var_name="area", value_name="value")
+    return melted[["area", "hour", "value"]]
+
+
+# ── Filtering helper ──
+
+
+def _filter_to_posix(df, valid_hours):
+    """Filter a raw CSV DataFrame to valid_hours and convert 'hour' to POSIX hours.
+
+    Args:
+        df: DataFrame with a datetime 'hour' column.
+        valid_hours: Set of POSIX hours to keep.
+
+    Returns:
+        Filtered DataFrame with 'hour' as POSIX int.
+    """
+    df = df.copy()
+    df["hour"] = to_posix_hours(df["hour"])
+    return df[df["hour"].isin(valid_hours)]

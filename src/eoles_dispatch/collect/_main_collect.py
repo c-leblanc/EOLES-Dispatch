@@ -84,8 +84,7 @@ from .rninja import collect_ninja
 logger = logging.getLogger(__name__)
 
 
-
-# ── Main collection orchestrator ──
+# ── Main orchestrator ──
 
 def collect_all(
     output_dir,
@@ -178,7 +177,7 @@ def collect_all(
     return output_dir
 
 
-# ── Collection of full history data for 1 year ──
+# ── Intermediate-level orchestration ──
 
 def collect_history(
     output_dir,
@@ -518,7 +517,7 @@ def collect_actual_prices(client, areas, start, end, gap_report, canon_idx):
 
 
 
-# ── Year-based validation ──
+# ── Validation helper ──
 
 def _validate_year(year_dir, year, areas, exo_areas):
     """Validate completeness of a year data directory.

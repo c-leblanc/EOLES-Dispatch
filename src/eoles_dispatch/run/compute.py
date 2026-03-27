@@ -11,6 +11,9 @@ import pandas as pd
 from ..config import ETA_IN, ETA_OUT, NMD_TYPES
 
 
+# ── Production and NMD computation ──
+
+
 def compute_nmd(production, areas, nmd_tecs=NMD_TYPES):
     """Compute NMD (non-market-dependent) production from raw generation data.
 
@@ -102,6 +105,9 @@ def compute_vre_capacity_factors(
     return pd.concat(frames, ignore_index=True)[["area", "tec", "hour", "value"]]
 
 
+# ── Availability factor computation ──
+
+
 def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
     """Compute weekly max nuclear availability factor from raw production.
 
@@ -160,6 +166,9 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
         else:
             result_parts.append(f)
     return pd.concat(result_parts, ignore_index=True)[["area", "week", "value"]]
+
+
+# ── Hydro inflows and limits ──
 
 
 def compute_lake_inflows(

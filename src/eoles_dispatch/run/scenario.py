@@ -10,6 +10,9 @@ from pathlib import Path
 import pandas as pd
 
 
+# ── Helpers ──
+
+
 def _read_scenario_table(scenario_path, name, **kwargs):
     """Read a scenario table from either a CSV directory or an Excel file."""
     scenario_path = Path(scenario_path)
@@ -17,6 +20,9 @@ def _read_scenario_table(scenario_path, name, **kwargs):
         return pd.read_csv(scenario_path / f"{name}.csv", **kwargs)
     else:
         return pd.read_excel(scenario_path, sheet_name=name, **kwargs)
+
+
+# ── High-level entry points ──
 
 
 def extract_scenario(scenario_path, areas, exo_areas, hour_month):

@@ -16,6 +16,141 @@ from .config import MODEL_TO_AGG, TRLOSS
 logger = logging.getLogger(__name__)
 
 
+# ── Report generators ──
+
+
+def report_prices(model, run_dir):
+    """Extract hourly marginal prices (dual of adequacy constraint) for each area."""
+    output_dir = _ensure_output_dir(run_dir)
+
+    areas = sorted(model.a)
+    hours = sorted(model.h)
+
+    # Build all (area, hour) keys and extract duals in bulk
+    keys = [(a, h) for a in areas for h in hours]
+    duals = _extract_duals_bulk(model, model.adequacy_constraint, keys)
+
+    # Reshape into DataFrame: rows=hours, columns=areas
+    n_hours = len(hours)
+    data = {}
+    for i, a in enumerate(areas):
+        data[a] = duals[i * n_hours : (i + 1) * n_hours]
+
+    prices = pd.DataFrame(data, index=hours)
+    prices.index.name = "hour"
+    prices.to_csv(output_dir / "prices.csv", index=True)
+
+
+def report_production(model, run_dir):
+    """Extract hourly generation by technology and area."""
+    output_dir = _ensure_output_dir(run_dir)
+
+    areas = sorted(model.a)
+    tecs = sorted(model.tec)
+    hours = sorted(model.h)
+
+    gene_vals = _extract_var_values_bulk(model.G)
+
+    # Rows = hours, columns = area_tec pairs (e.g. FR_nmd, FR_coal, ...)
+    hour_rows = []
+    for h in hours:
+        row = [h]
+        for a in areas:
+            for tec in tecs:
+                val = gene_vals.get((h, a, tec), 0.0)
+                row.append(val)
+        hour_rows.append(row)
+
+    cols = ["hour"] + [f"{a}_{tec}" for a in areas for tec in tecs]
+    df = pd.DataFrame(hour_rows, columns=cols)
+    df.to_csv(output_dir / "production.csv", index=False)
+
+
+def report_capa_on(model, run_dir):
+    """Extract hourly capacity dispatched (for thermal with startup costs)."""
+    output_dir = _ensure_output_dir(run_dir)
+
+    areas = sorted(model.a)
+    thr = sorted(model.thr)
+    hours = sorted(model.h)
+
+    N_vals = _extract_var_values_bulk(model.N)
+
+    hour_rows = []
+    for h in hours:
+        row = [h]
+        for a in areas:
+            for tec in thr:
+                val = N_vals.get((h, a, tec), 0.0)
+                row.append(val)
+        hour_rows.append(row)
+
+    cols = ["hour"] + [f"{a}_{tec}" for a in areas for tec in thr]
+    df = pd.DataFrame(hour_rows, columns=cols)
+    df.to_csv(output_dir / "capa_on.csv", index=False)
+
+
+def report_FRtrade(model, run_dir):
+    """Extract hourly cross-border flows (FR imports/exports)."""
+    output_dir = _ensure_output_dir(run_dir)
+
+    hours = sorted(model.h)
+    trade_vals = _extract_var_values_bulk(model.EX)
+
+    # List all exo_IM and exo_EX edges with FR
+    edges = sorted([(a, b) for a, b in model.exo_IM.keys() if a == "FR"] +
+                   [(a, b) for a, b in model.exo_EX.keys() if a == "FR"])
+
+    hour_rows = []
+    for h in hours:
+        row = [h]
+        for a, b in edges:
+            val = trade_vals.get((h, a, b), 0.0)
+            row.append(val)
+        hour_rows.append(row)
+
+    cols = ["hour"] + [f"{a}_{b}" for a, b in edges]
+    df = pd.DataFrame(hour_rows, columns=cols)
+    df.to_csv(output_dir / "FRtrade.csv", index=False)
+
+
+def write_log(run_dir, model, run_name, scenario, year, start_time, exec_str, **params):
+    """Write a log file summarizing the run parameters and results."""
+    run_path = Path(run_dir)
+    run_path.mkdir(parents=True, exist_ok=True)
+
+    total_cost = pyo.value(model.objective)
+
+    # Extract CO2 in bulk instead of looping through 61k pyo.value() calls
+    hcarb_values = _extract_var_values_bulk(model.hcarb)
+    total_co2 = sum(v for v in hcarb_values.values() if v is not None)
+
+    # Scenario file last modification date
+    scenario_date = ""
+    scenario_file = run_path.parent.parent / "scenarios" / f"{scenario}.xlsx"
+    if scenario_file.exists():
+        mod_time = os.path.getmtime(scenario_file)
+        scenario_date = datetime.datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Cost unit: hcost is in kEUR/h (EUR/MWh × GW), summed over all hours → kEUR total.
+    # Convert to billion EUR for display.
+    total_cost_beur = total_cost / 1e6
+
+    with open(run_path / f"_log_{run_name}.txt", "w") as f:
+        f.write(f"RUN NAME = {run_name}\n")
+        f.write(f"Scenario file: {scenario}\n")
+        if scenario_date:
+            f.write(f"\t last modified on {scenario_date}\n")
+        f.write(f"Year simulated: {year}\n\n")
+        f.write(f"Total dispatch cost: {total_cost_beur:.2f} bEUR\n")
+        f.write(f"Total CO2 emissions: {total_co2 / 1e6:.2f} MtCO2\n\n")
+        f.write(f"Started running at: {time.asctime(start_time)}\n")
+        f.write(f"Execution time: {exec_str}\n")
+
+
+# ── Helpers ──
+
+
 def _ensure_output_dir(run_dir):
     output_dir = Path(run_dir) / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -49,28 +184,6 @@ def _extract_var_values_bulk(var):
     return {k: v.value for k, v in var.items()}
 
 
-def report_prices(model, run_dir):
-    """Extract hourly marginal prices (dual of adequacy constraint) for each area."""
-    output_dir = _ensure_output_dir(run_dir)
-
-    areas = sorted(model.a)
-    hours = sorted(model.h)
-
-    # Build all (area, hour) keys and extract duals in bulk
-    keys = [(a, h) for a in areas for h in hours]
-    duals = _extract_duals_bulk(model, model.adequacy_constraint, keys)
-
-    # Reshape into DataFrame: rows=hours, columns=areas
-    n_hours = len(hours)
-    data = {}
-    for i, a in enumerate(areas):
-        data[a] = duals[i * n_hours : (i + 1) * n_hours]
-
-    prices = pd.DataFrame(data, index=hours)
-    prices.index.name = "hour"
-    prices.to_csv(output_dir / "prices.csv", index=True)
-
-
 def _safe_gene_values(gene_vals, tec, n_rows):
     """Extract generation values for a technology, returning zeros if it doesn't exist."""
     keys = [k for k in gene_vals if k[1] == tec]
@@ -80,14 +193,16 @@ def _safe_gene_values(gene_vals, tec, n_rows):
 
 
 def _safe_var_values(var_vals, tec, n_rows):
-    """Extract variable values for a technology (storage, on), returning zeros if missing."""
+    """Extract variable values for a technology, returning zeros if it doesn't exist."""
     keys = [k for k in var_vals if k[1] == tec]
     if not keys:
         return np.zeros(n_rows)
     return np.array([var_vals[k] or 0.0 for k in sorted(keys)])
-
-
-def report_production(model, run_dir):
+    """Extract generation values for a technology, returning zeros if it doesn't exist."""
+    keys = [k for k in gene_vals if k[1] == tec]
+    if not keys:
+        return np.zeros(n_rows)
+    return np.array([gene_vals[k] or 0.0 for k in sorted(keys)])
     """Extract hourly production by technology and area."""
     output_dir = _ensure_output_dir(run_dir)
     n_rows = len(model.a) * len(model.h)

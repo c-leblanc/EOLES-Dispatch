@@ -48,6 +48,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+# ── Gap-filling algorithm ──
+
+
 def _find_gaps(series):
     """Identify contiguous NaN gaps in a series.
 
@@ -262,7 +265,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
     return result
 
 
-# ── Gap-fill report ──
+# ── Gap-fill report class ──
 
 
 class Report:
@@ -290,7 +293,7 @@ class Report:
         """Write the report to output_dir/gap_fill_report.csv and .txt."""
         if not self.entries:
             # No gaps at all — still write a minimal report
-            report_path = Path(output_dir) / "gap_fill_report.txt"
+            report_path = Path(output_dir) / "_gap_fill_report.txt"
             report_path.write_text(
                 "Gap-fill report\n"
                 "===============\n\n"
@@ -303,11 +306,11 @@ class Report:
         df = pd.DataFrame(self.entries)
 
         # CSV — detailed log of every gap
-        csv_path = output_dir / "gap_fill_report.csv"
+        csv_path = output_dir / "_gap_fill_report.csv"
         df.to_csv(csv_path, index=False)
 
         # TXT — human-readable summary
-        txt_path = output_dir / "gap_fill_report.txt"
+        txt_path = output_dir / "_gap_fill_report.txt"
         lines = [
             "Gap-fill report",
             "===============",
@@ -351,6 +354,6 @@ class Report:
 
         txt_path.write_text("\n".join(lines))
         logger.info(
-            f"  → gap_fill_report.csv ({total_gaps} entries), "
-            f"gap_fill_report.txt ({int(total_hours)}h filled)"
+            f"  → _gap_fill_report.csv ({total_gaps} entries), "
+            f"_gap_fill_report.txt ({int(total_hours)}h filled)"
         )

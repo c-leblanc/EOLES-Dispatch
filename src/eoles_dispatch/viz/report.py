@@ -23,60 +23,8 @@ from .charts_outputs import (
 )
 from .loaders import _load_metadata
 
-# ── Chart lists ──
 
-_INPUT_CHARTS_FR = [
-    ("demand", chart_demand),
-    ("vre_profiles", chart_vre_profiles),
-    ("nmd", chart_nmd),
-    ("nuclear", chart_nuclear_availability),
-    ("lake_inflows", chart_lake_inflows),
-    ("capacity", chart_capacity_mix),
-]
-
-_INPUT_CHARTS_OTHER = [
-    ("demand", chart_demand),
-    ("vre_profiles", chart_vre_profiles),
-    ("nmd", chart_nmd),
-    ("exo_prices", chart_exo_prices),
-    ("nuclear", chart_nuclear_availability),
-    ("lake_inflows", chart_lake_inflows),
-    ("capacity", chart_capacity_mix),
-    ("interconnections", chart_interconnections),
-]
-
-_OUTPUT_CHARTS = [
-    ("price_overview", html_price_overview),
-    ("prices", chart_prices),
-    ("production", chart_production),
-]
-
-_OUTPUT_CHARTS_VALIDATE = [
-    ("price_overview", html_price_overview_validate),
-    ("prices", chart_prices_validate),
-    ("price_scatter", chart_price_scatter),
-    ("production", chart_production),
-]
-
-
-def _render_charts(run_dir, chart_list, areas):
-    """Render a list of charts to HTML divs.
-
-    Chart functions can return a Plotly figure or a raw HTML string.
-    Plotly CDN is loaded once in the page <head>.
-    """
-    parts = []
-    for name, chart_fn in chart_list:
-        result = chart_fn(run_dir, areas)
-        if result is None:
-            continue
-        if isinstance(result, str):
-            parts.append(f'<div class="chart">{result}</div>')
-        else:
-            parts.append(
-                f'<div class="chart">{result.to_html(full_html=False, include_plotlyjs=False)}</div>'
-            )
-    return parts
+# ── Main orchestrator ──
 
 
 def generate_report(run_dir, open_browser=True, validate=False):
@@ -469,3 +417,59 @@ function switchTab(id) {{
         webbrowser.open(f"file://{out_path.resolve()}")
 
     return out_path
+
+
+# ── Chart configuration and rendering ──
+
+_INPUT_CHARTS_FR = [
+    ("demand", chart_demand),
+    ("vre_profiles", chart_vre_profiles),
+    ("nmd", chart_nmd),
+    ("nuclear", chart_nuclear_availability),
+    ("lake_inflows", chart_lake_inflows),
+    ("capacity", chart_capacity_mix),
+]
+
+_INPUT_CHARTS_OTHER = [
+    ("demand", chart_demand),
+    ("vre_profiles", chart_vre_profiles),
+    ("nmd", chart_nmd),
+    ("exo_prices", chart_exo_prices),
+    ("nuclear", chart_nuclear_availability),
+    ("lake_inflows", chart_lake_inflows),
+    ("capacity", chart_capacity_mix),
+    ("interconnections", chart_interconnections),
+]
+
+_OUTPUT_CHARTS = [
+    ("price_overview", html_price_overview),
+    ("prices", chart_prices),
+    ("production", chart_production),
+]
+
+_OUTPUT_CHARTS_VALIDATE = [
+    ("price_overview", html_price_overview_validate),
+    ("prices", chart_prices_validate),
+    ("price_scatter", chart_price_scatter),
+    ("production", chart_production),
+]
+
+
+def _render_charts(run_dir, chart_list, areas):
+    """Render a list of charts to HTML divs.
+
+    Chart functions can return a Plotly figure or a raw HTML string.
+    Plotly CDN is loaded once in the page <head>.
+    """
+    parts = []
+    for name, chart_fn in chart_list:
+        result = chart_fn(run_dir, areas)
+        if result is None:
+            continue
+        if isinstance(result, str):
+            parts.append(f'<div class="chart">{result}</div>')
+        else:
+            parts.append(
+                f'<div class="chart">{result.to_html(full_html=False, include_plotlyjs=False)}</div>'
+            )
+    return parts
