@@ -416,5 +416,5 @@ def fetch_installed_capacity(client, area, year):
         if cols:
             val = snapshot[cols].sum()
             if val > 0:
-                result[type] = val
+                result[prodtype] = val
     return result if result else None

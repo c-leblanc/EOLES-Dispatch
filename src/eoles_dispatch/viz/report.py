@@ -457,7 +457,7 @@ function switchTab(id) {{
   document.getElementById('tab-' + id).classList.add('active');
   const tabs = document.querySelectorAll('.tab');
   const map = {{'fr-in': 'France — Inputs', 'fr-out': 'France — Outputs',
-                'other-in': 'Other countries — Inputs', 'other-out': 'Other countries — Outputs'}};
+                'other-in': 'Neighbors — Inputs', 'other-out': 'Neighbors — Outputs'}};
   tabs.forEach(t => {{ if (t.textContent === map[id]) t.classList.add('active'); }});
   window.dispatchEvent(new Event('resize'));
 }}

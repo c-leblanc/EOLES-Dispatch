@@ -222,7 +222,7 @@ def _price_duration_curve(df, cols, actual_df=None, actual_cols=()):
     fig.update_layout(
         xaxis_title="Duration (%)",
         yaxis_title="EUR/MWh",
-        height=50,
+        height=500,
         yaxis_rangemode="tozero" if y_min >= 0 else "normal",
     )
     _apply_theme(fig)

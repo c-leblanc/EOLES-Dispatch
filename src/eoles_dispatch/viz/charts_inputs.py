@@ -42,7 +42,7 @@ def chart_vre_profiles(run_dir, areas):
     labels = {
         "onshore": "Onshore wind",
         "offshore": "Offshore wind",
-        "solar": "Solar solar",
+        "solar": "Solar",
         "river": "Run-of-river",
     }
     fig = make_subplots(

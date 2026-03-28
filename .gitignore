@@ -32,6 +32,9 @@ data/
 .claude/
 CLAUDE.md
 
+# Notes and analysis
+Notes/
+
 # Scenarios: only track baseline, editor and Excel template
 scenarios/*
 !scenarios/baseline/
