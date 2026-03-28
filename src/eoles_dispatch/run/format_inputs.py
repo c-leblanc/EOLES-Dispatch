@@ -187,7 +187,7 @@ def load_year_production(data_dir, year, areas):
         areas: List of area codes.
 
     Returns:
-        dict {area: pd.DataFrame} with columns ['hour', fuel1, fuel2, ...].
+        dict {area: pd.DataFrame} with columns ['hour', prodtype1, prodtype2, ...].
         Values in MW. 'hour' is a UTC tz-naive datetime.
     """
     year_dir = Path(data_dir) / str(year)

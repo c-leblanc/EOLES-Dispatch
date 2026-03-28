@@ -24,7 +24,7 @@ Called from:
 
 Data structure:
     data/<year>/
-        production_<area>.csv   - hourly generation by fuel type (MW)
+        production_<area>.csv   - hourly generation by production type (MW)
         demand.csv              - hourly demand per area (MW)
         installed_capacity.csv  - installed capacity: technologies in rows, areas in columns (MW)
         exo_prices.csv          - hourly day-ahead prices for exo areas (EUR/MWh)
@@ -44,7 +44,7 @@ Functions:
         Called from collect_all.
 
     collect_production(client, areas, start, end, gap_report)
-        Download hourly generation by fuel type per area (MW). ENTSO-E
+        Download hourly generation by production type per area (MW). ENTSO-E
         primary, Elexon fallback for UK. PHS split into phs/phs_in.
         Called from collect_all.
 
@@ -188,7 +188,7 @@ def collect_history(
 ):
     """Download all time-varying ENTSO-E data for a single year and save to CSV.
 
-    Fetches demand, generation by fuel type, installed capacity, exogenous
+    Fetches demand, generation by production type, installed capacity, exogenous
     prices, and actual prices for modeled areas. Writes directly into
     output_dir — does not create partial/corrupt directories (that lifecycle
     is managed by collect_all).
@@ -221,7 +221,7 @@ def collect_history(
     production = collect_production(client, areas, start, end, gap_report, canon_idx)
     for area, prod_df in production.items():
         prod_df.to_csv(output_dir / f"production_{area}.csv", index=False)
-        logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} fuel types)")
+        logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} production types)")
 
     # 3. Installed capacity per area
     logger.info("=== Installed capacity ===")
@@ -315,15 +315,15 @@ def collect_demand(client, areas, start, end, gap_report, canon_idx):
     return df.reset_index()
 
 
-# ── Production data (raw generation by fuel type) ──
+# ── Production data (raw generation by production type) ──
 
 def collect_production(client, areas, start, end, gap_report, canon_idx):
-    """Collect raw hourly production by fuel type for each area.
+    """Collect raw hourly production by production type for each area.
 
     Downloads generation data from ENTSO-E (or Elexon for UK fallback),
-    reindexes onto the canonical index, then gap-fills each fuel series.
+    reindexes onto the canonical index, then gap-fills each production series.
     Both sources return the same format: DataFrame with 'hour' column
-    (naive UTC) and fuel columns including 'phs' and 'phs_in'.
+    (naive UTC) and production columns including 'phs' and 'phs_in'.
 
     Args:
         client: EntsoePandasClient.
@@ -333,7 +333,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
         canon_idx: DatetimeIndex from canonical_index(year).
 
     Returns:
-        dict {area: pd.DataFrame} with columns ['hour', fuel1, ..., phs, phs_in].
+        dict {area: pd.DataFrame} with columns ['hour', production1, ..., phs, phs_in].
     """
     result = {}
     for area in areas:
@@ -374,7 +374,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                 logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
 
         if production_df is not None and len(production_df) > 0:
-            # Reindex onto canonical index, then gap-fill each fuel column
+            # Reindex onto canonical index, then gap-fill each production column
             indexed = production_df.set_index("hour")
             indexed = indexed.reindex(canon_idx)
             for col in indexed.columns:
@@ -390,7 +390,7 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
 # ── Installed capacity ──
 
 def collect_installed_capacity(client, areas, year, out_dir):
-    """Collect installed generation capacity per fuel type for each area.
+    """Collect installed generation capacity per production type for each area.
 
     ENTSO-E primary, Elexon fallback for UK. Saves installed_capacity.csv
     in wide format: technologies in rows, areas in columns (MW).
@@ -410,7 +410,7 @@ def collect_installed_capacity(client, areas, year, out_dir):
         try:
             capa = entsoe.fetch_installed_capacity(client, area, year)
             if capa:
-                logger.info(f"from ENTSO-E ({len(capa)} fuel types) (OK)")
+                logger.info(f"from ENTSO-E ({len(capa)} production types) (OK)")
         except Exception as e:
             if area != "UK":
                 logger.warning(f"Failed (KO)\nERROR: {e}")
@@ -421,7 +421,7 @@ def collect_installed_capacity(client, areas, year, out_dir):
                 print("try Elexon... ", end='', flush=True)
                 capa = elexon.fetch_installed_capacity(year)
                 if capa:
-                    logger.info(f"from Elexon ({len(capa)} fuel types) (OK)")
+                    logger.info(f"from Elexon ({len(capa)} production types) (OK)")
             except Exception as e:
                 logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
 

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eoles_dispatch.collect.entsoe import ENTSOE_COL_NAMES, PRODUCTION_FUELS, col_matches, is_usable
+from eoles_dispatch.collect.entsoe import ENTSOE_COL_NAMES, PRODUCTION_TYPES, col_matches, is_usable
 from eoles_dispatch.collect.gap_filling import Report, interpolate_gaps
 from eoles_dispatch.utils import (
     canonical_index,
@@ -26,7 +26,7 @@ def test_col_matches_human_readable_tuple():
     assert col_matches(("Fossil Gas", "Actual Aggregated"), "gas") is True
 
 
-def test_col_matches_wrong_fuel_returns_false():
+def test_col_matches_wrong_prodtype_returns_false():
     assert col_matches("Fossil Gas", "nuclear") is False
 
 
@@ -35,11 +35,11 @@ def test_col_matches_hydro_phs():
     assert col_matches("Hydro Pumped Storage", "phs") is True
 
 
-def test_col_matches_all_production_fuels_have_names():
-    """Every key in PRODUCTION_FUELS should also have an entry in ENTSOE_COL_NAMES."""
-    for fuel_type in PRODUCTION_FUELS:
-        assert fuel_type in ENTSOE_COL_NAMES, (
-            f"{fuel_type} is in PRODUCTION_FUELS but missing from ENTSOE_COL_NAMES"
+def test_col_matches_all_production_types_have_names():
+    """Every key in PRODUCTION_TYPES should also have an entry in ENTSOE_COL_NAMES."""
+    for production_type in PRODUCTION_TYPES:
+        assert production_type in ENTSOE_COL_NAMES, (
+            f"{production_type} is in PRODUCTION_TYPES but missing from ENTSOE_COL_NAMES"
         )
 
 

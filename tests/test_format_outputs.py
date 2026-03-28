@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from eoles_dispatch.format_outputs import _safe_gene_values, _safe_var_values
+from eoles_dispatch.run.format_outputs import _safe_gene_values, _safe_var_values
 
 # ---------------------------------------------------------------------------
 # _safe_gene_values

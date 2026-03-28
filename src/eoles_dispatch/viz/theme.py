@@ -15,6 +15,9 @@ COUNTRY_COLORS = {
 }
 
 TEC_COLORS = {
+    "net_exports": "#adb5bd",
+    "phs_in": "#6497b1",
+    "battery_in": "#ffa500",
     "nuclear": "#ffd966",
     "gas": "#9d0208",
     "coal": "#6c757d",
@@ -24,18 +27,17 @@ TEC_COLORS = {
     "river": "#011f4b",
     "lake_phs": "#6497b1",
     "battery": "#ffa500",
-    "biomass": "#262626",
     "nmd": "#262626",
-    "net_imports": "#adb5bd",
-    "net_exports": "#adb5bd",
-    "phs_in": "#6497b1",
-    "battery_in": "#ffa500",
+    "net_imports": "#adb5bd"
 }
 
 # Display labels for technologies.
 # Derived from MODEL_TO_AGG for model-level sub-types, plus entries for
 # agg-level names (used in production.csv columns) and special categories.
 _AGG_DISPLAY = {
+    "net_exports": "Net exports",
+    "phs_in": "Lake/PHS (charge)",
+    "battery_in": "Battery (charge)",
     "nuclear": "Nuclear",
     "gas": "Gas",
     "coal": "Coal",
@@ -46,11 +48,7 @@ _AGG_DISPLAY = {
     "lake_phs": "Lake/PHS",
     "battery": "Battery",
     "nmd": "NMD",
-    "phs_in": "Lake/PHS (charge)",
-    "battery_in": "Battery (charge)",
     "net_imports": "Net imports",
-    "net_exo_imports": "Net imports (exo)",
-    "biomass": "Biomass",
 }
 
 # TEC_AGGREGATION: maps both model-level and agg-level tech names to display labels.
@@ -65,6 +63,9 @@ TEC_AGGREGATION = {
 }
 
 AGG_COLORS = {
+    "Net exports": "#adb5bd",
+    "Lake/PHS (charge)": "#6497b1",
+    "Battery (charge)": "#ffa500",
     "Nuclear": "#ffd966",
     "Gas": "#9d0208",
     "Coal": "#6c757d",
@@ -73,17 +74,21 @@ AGG_COLORS = {
     "Solar": "#ffff00",
     "River": "#011f4b",
     "Lake/PHS": "#6497b1",
-    "Lake/PHS (charge)": "#b5d4e8",
     "Battery": "#ffa500",
-    "Battery (charge)": "#ffd699",
-    "Biomass": "#556b2f",
     "NMD": "#262626",
     "Net imports": "#adb5bd",
-    "Net imports (exo)": "#dee2e6",
 }
 
+# Groups that represent consumption (stored as negative values in production.csv).
+# Traces for these groups must be added in reverse AGG_ORDER to achieve the correct
+# visual stacking order below the x-axis (net_exports at bottom, battery_in at top).
+AGG_NEGATIVE = {"Net exports", "Lake/PHS (charge)", "Battery (charge)"}
+
 # Order for stacked area (bottom to top) — positive generation
-AGG_ORDER_POS = [
+AGG_ORDER = [
+    "Net exports", #negative
+    "Lake/PHS (charge)", #negative
+    "Battery (charge)", #negative
     "Nuclear",
     "Gas",
     "Coal",
@@ -93,20 +98,13 @@ AGG_ORDER_POS = [
     "River",
     "Lake/PHS",
     "Battery",
-    "Biomass",
     "NMD",
     "Net imports",
-    "Net imports (exo)",
 ]
-# Negative (consumption/charge)
-AGG_ORDER_NEG = ["Lake/PHS (charge)", "Battery (charge)"]
-
-AGG_ORDER = AGG_ORDER_POS + AGG_ORDER_NEG
 
 # ── Theme ──
 
 _FONT = "'Nunito', -apple-system, BlinkMacSystemFont, sans-serif"
-_FONT_MONO = "'DM Mono', monospace"
 
 _CLEAN_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",

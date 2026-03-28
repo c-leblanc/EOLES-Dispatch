@@ -14,8 +14,8 @@ from .loaders import (
 )
 from .theme import (
     AGG_COLORS,
-    AGG_ORDER_NEG,
-    AGG_ORDER_POS,
+    AGG_NEGATIVE,
+    AGG_ORDER,
     LEGEND_BELOW,
     TEC_AGGREGATION,
     _apply_theme,
@@ -486,34 +486,14 @@ def chart_production(run_dir, areas):
         vertical_spacing=0.02,
     )
 
-    # Determine which groups are present
-    present_pos = [g for g in AGG_ORDER_POS if g in agg_groups]
-    present_neg = [g for g in AGG_ORDER_NEG if g in agg_groups]
+    # Negative groups added in reverse AGG_ORDER so the first trace added is closest
+    # to 0 (Battery charge), giving: net_exports at bottom, battery_in at top.
+    neg_present = [g for g in reversed(AGG_ORDER) if g in agg_groups and g in AGG_NEGATIVE]
+    pos_present = [g for g in AGG_ORDER if g in agg_groups and g not in AGG_NEGATIVE]
 
     for row, area in enumerate(area_list, 1):
         sub = agg_data[agg_data["area"] == area]
-        # Positive stack (generation)
-        for group in present_pos:
-            if sub[group].abs().sum() < 0.001:
-                continue
-            fig.add_trace(
-                go.Scatter(
-                    x=sub["datetime"],
-                    y=sub[group],
-                    name=group,
-                    mode="lines",
-                    stackgroup="pos",
-                    line=dict(width=0),
-                    fillcolor=AGG_COLORS.get(group, "#888"),
-                    legendgroup=group,
-                    showlegend=(row == 1),
-                    hovertemplate=f"{group}: %{{y:.2f}} GW<extra></extra>",
-                ),
-                row=row,
-                col=1,
-            )
-        # Negative stack (charge)
-        for group in present_neg:
+        for group in neg_present:
             if sub[group].abs().sum() < 0.001:
                 continue
             fig.add_trace(
@@ -523,6 +503,25 @@ def chart_production(run_dir, areas):
                     name=group,
                     mode="lines",
                     stackgroup="neg",
+                    line=dict(width=0),
+                    fillcolor=AGG_COLORS.get(group, "#888"),
+                    legendgroup=group,
+                    showlegend=(row == 1),
+                    hovertemplate=f"{group}: %{{y:.2f}} GW<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+        for group in pos_present:
+            if sub[group].abs().sum() < 0.001:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=sub["datetime"],
+                    y=sub[group],
+                    name=group,
+                    mode="lines",
+                    stackgroup="pos",
                     line=dict(width=0),
                     fillcolor=AGG_COLORS.get(group, "#888"),
                     legendgroup=group,
@@ -551,6 +550,244 @@ def chart_production(run_dir, areas):
         fig.update_yaxes(title_text="GW", row=row, col=1)
     fig.update_layout(height=500 * n)
     return _apply_theme(fig, extra_top_margin=20)
+
+
+# ── Energy mix chart builders ──
+# FIXME : Fix the display of negative values, consider migrating away from plotly
+# TODO : Add table format of the energy mix
+
+def chart_energy_mix_annual(run_dir, areas):
+    """Annual energy mix: stacked bar chart with one bar per area, stacked by technology."""
+    path = run_dir / "outputs" / "production.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "hour" not in df.columns or "area" not in df.columns:
+        return None
+
+    area_list, agg_data = _build_energy_agg(df, areas)
+    if not area_list:
+        return None
+
+    tec_display_cols = [g for g in AGG_ORDER if g in agg_data.columns]
+    annual = agg_data.groupby("area")[tec_display_cols].sum() / 1000  # TWh
+
+    fig = go.Figure()
+    _add_stacked_bars(fig, area_list, annual)
+    fig.update_layout(yaxis_title="TWh", barmode="stack", height=600)
+    _apply_theme(fig)
+    fig.update_layout(margin_t=20)
+    return fig
+
+
+def chart_energy_mix_monthly(run_dir, areas):
+    """Monthly energy mix: stacked bar chart by month, one subplot per area."""
+    path = run_dir / "outputs" / "production.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "hour" not in df.columns or "area" not in df.columns:
+        return None
+
+    area_list, agg_data = _build_energy_agg(df, areas)
+    if not area_list:
+        return None
+
+    agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
+    tec_display_cols = [g for g in AGG_ORDER if g in agg_data.columns]
+    n = len(area_list)
+
+    fig = make_subplots(
+        rows=n,
+        cols=1,
+        shared_xaxes=True,
+        subplot_titles=area_list if n > 1 else None,
+        vertical_spacing=0.02,
+    )
+    for row, area in enumerate(area_list, 1):
+        sub = agg_data[agg_data["area"] == area]
+        monthly = sub.groupby("month")[tec_display_cols].sum() / 1000  # TWh
+        months_present = sorted(monthly.index.tolist())
+        _add_monthly_stacked_bars(
+            fig, monthly, months_present, row=row, col=1, show_legend=(row == 1)
+        )
+        fig.update_yaxes(title_text="TWh", row=row, col=1)
+
+    fig.update_layout(barmode="stack", height=600 * n)
+    _apply_theme(fig)
+    fig.update_layout(margin_t=20)
+    return fig
+
+
+def chart_energy_mix_annual_validate(run_dir, areas):
+    """Annual energy mix: areas interleaved (sim / act) per area (--validate mode)."""
+    path = run_dir / "outputs" / "production.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "hour" not in df.columns or "area" not in df.columns:
+        return None
+
+    area_list, agg_data = _build_energy_agg(df, areas)
+    if not area_list:
+        return None
+
+    tec_display_cols = [g for g in AGG_ORDER if g in agg_data.columns]
+    annual_sim = agg_data.groupby("area")[tec_display_cols].sum() / 1000  # TWh
+
+    actual_df = _load_actual_production(run_dir)
+    if actual_df is None:
+        return chart_energy_mix_annual(run_dir, areas)
+
+    _, agg_actual = _build_energy_agg(actual_df, area_list)
+    if agg_actual is None:
+        return chart_energy_mix_annual(run_dir, areas)
+
+    tec_display_cols_act = [g for g in AGG_ORDER if g in agg_actual.columns]
+    annual_act = agg_actual.groupby("area")[tec_display_cols_act].sum() / 1000  # TWh
+
+    # Interleaved x: [area1 (sim), area1 (act), area2 (sim), area2 (act), ...]
+    x_labels = [lbl for a in area_list for lbl in (f"{a} (sim)", f"{a} (act)")]
+
+    fig = go.Figure()
+    neg_order = [g for g in reversed(AGG_ORDER) if g in AGG_NEGATIVE]
+    pos_order = [g for g in AGG_ORDER if g not in AGG_NEGATIVE]
+    for group in neg_order + pos_order:
+        y_vals = []
+        for area in area_list:
+            sim_val = (
+                float(annual_sim.at[area, group])
+                if area in annual_sim.index and group in annual_sim.columns
+                else 0.0
+            )
+            act_val = (
+                float(annual_act.at[area, group])
+                if area in annual_act.index and group in annual_act.columns
+                else 0.0
+            )
+            y_vals += [sim_val, act_val]
+        if sum(abs(v) for v in y_vals) < 0.001:
+            continue
+        fig.add_trace(
+            go.Bar(
+                x=x_labels,
+                y=y_vals,
+                name=group,
+                marker_color=AGG_COLORS.get(group, "#888"),
+                legendgroup=group,
+                hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
+            )
+        )
+
+    fig.update_layout(yaxis_title="TWh", barmode="stack", height=600)
+    _apply_theme(fig)
+    fig.update_layout(margin_t=20)
+    return fig
+
+
+def chart_energy_mix_monthly_validate(run_dir, areas):
+    """Monthly energy mix: months interleaved (sim / act) per area (--validate mode)."""
+    path = run_dir / "outputs" / "production.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "hour" not in df.columns or "area" not in df.columns:
+        return None
+
+    area_list, agg_data = _build_energy_agg(df, areas)
+    if not area_list:
+        return None
+
+    agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
+    tec_display_cols = [g for g in AGG_ORDER if g in agg_data.columns]
+
+    actual_df = _load_actual_production(run_dir)
+    if actual_df is None:
+        return chart_energy_mix_monthly(run_dir, areas)
+
+    _, agg_actual = _build_energy_agg(actual_df, area_list)
+    if agg_actual is None:
+        return chart_energy_mix_monthly(run_dir, areas)
+
+    agg_actual["month"] = hour_to_cet_month(agg_actual["hour"])  # "YYYYMM" in CET
+    tec_display_cols_act = [g for g in AGG_ORDER if g in agg_actual.columns]
+
+    n = len(area_list)
+    fig = make_subplots(
+        rows=n,
+        cols=1,
+        shared_xaxes=False,
+        subplot_titles=area_list if n > 1 else None,
+        vertical_spacing=0.02,
+    )
+    for row, area in enumerate(area_list, 1):
+        sub_sim = agg_data[agg_data["area"] == area]
+        monthly_sim = sub_sim.groupby("month")[tec_display_cols].sum() / 1000
+
+        sub_act = (
+            agg_actual[agg_actual["area"] == area] if area in agg_actual["area"].values else None
+        )
+        monthly_act = (
+            sub_act.groupby("month")[tec_display_cols_act].sum() / 1000
+            if sub_act is not None and not sub_act.empty
+            else None
+        )
+
+        # Union of all months, sorted, interleaved x
+        all_months = sorted(
+            set(monthly_sim.index) | (set(monthly_act.index) if monthly_act is not None else set())
+        )
+        x_labels = [
+            lbl
+            for m in all_months
+            for lbl in (
+                f"{_MONTH_LABELS.get(int(m[4:]), m)} (sim)",
+                f"{_MONTH_LABELS.get(int(m[4:]), m)} (act)",
+            )
+        ]
+
+        show_legend = row == 1
+        neg_order = [g for g in reversed(AGG_ORDER) if g in AGG_NEGATIVE]
+        pos_order = [g for g in AGG_ORDER if g not in AGG_NEGATIVE]
+        for group in neg_order + pos_order:
+            y_vals = []
+            for m in all_months:
+                sim_val = (
+                    float(monthly_sim.at[m, group])
+                    if m in monthly_sim.index and group in monthly_sim.columns
+                    else 0.0
+                )
+                act_val = (
+                    float(monthly_act.at[m, group])
+                    if monthly_act is not None
+                    and m in monthly_act.index
+                    and group in monthly_act.columns
+                    else 0.0
+                )
+                y_vals += [sim_val, act_val]
+            if sum(abs(v) for v in y_vals) < 0.001:
+                continue
+            fig.add_trace(
+                go.Bar(
+                    x=x_labels,
+                    y=y_vals,
+                    name=group,
+                    marker_color=AGG_COLORS.get(group, "#888"),
+                    legendgroup=group,
+                    showlegend=show_legend,
+                    hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+        fig.update_yaxes(title_text="TWh", row=row, col=1)
+
+    fig.update_layout(barmode="stack", height=600 * n)
+    _apply_theme(fig)
+    fig.update_layout(margin_t=20)
+    return fig
+
+
 
 
 # ── Energy mix helpers ──
@@ -602,27 +839,13 @@ def _build_energy_agg(df, areas):
 
 def _add_stacked_bars(fig, area_list, totals_twh, row=None, col=None, show_legend=True):
     """Add positive + negative stacked bar traces to a figure or subplot."""
-    present_pos = [g for g in AGG_ORDER_POS if g in totals_twh.columns]
-    present_neg = [g for g in AGG_ORDER_NEG if g in totals_twh.columns]
+    # Negative groups added in reverse AGG_ORDER: first trace = closest to 0 (Battery
+    # charge), last = farthest (Net exports), giving bottom-to-top: net_exports → battery.
+    neg_present = [g for g in reversed(AGG_ORDER) if g in totals_twh.columns and g in AGG_NEGATIVE]
+    pos_present = [g for g in AGG_ORDER if g in totals_twh.columns and g not in AGG_NEGATIVE]
     subplot_kwargs = {"row": row, "col": col} if row is not None else {}
 
-    for group in present_pos:
-        vals = totals_twh.reindex(area_list)[group].fillna(0)
-        if vals.abs().sum() < 0.001:
-            continue
-        fig.add_trace(
-            go.Bar(
-                x=area_list,
-                y=vals.values,
-                name=group,
-                marker_color=AGG_COLORS.get(group, "#888"),
-                legendgroup=group,
-                showlegend=show_legend,
-                hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
-            ),
-            **subplot_kwargs,
-        )
-    for group in present_neg:
+    for group in neg_present + pos_present:
         vals = totals_twh.reindex(area_list)[group].fillna(0)
         if vals.abs().sum() < 0.001:
             continue
@@ -648,27 +871,11 @@ def _add_monthly_stacked_bars(
     months_present are YYYYMM strings (e.g. "201902"), sorted ascending.
     """
     month_labels = [_MONTH_LABELS.get(int(m[4:]), m) for m in months_present]
-    present_pos = [g for g in AGG_ORDER_POS if g in monthly_twh.columns]
-    present_neg = [g for g in AGG_ORDER_NEG if g in monthly_twh.columns]
+    neg_present = [g for g in reversed(AGG_ORDER) if g in monthly_twh.columns and g in AGG_NEGATIVE]
+    pos_present = [g for g in AGG_ORDER if g in monthly_twh.columns and g not in AGG_NEGATIVE]
     subplot_kwargs = {"row": row, "col": col} if row is not None else {}
 
-    for group in present_pos:
-        vals = monthly_twh.reindex(months_present)[group].fillna(0)
-        if vals.abs().sum() < 0.001:
-            continue
-        fig.add_trace(
-            go.Bar(
-                x=month_labels,
-                y=vals.values,
-                name=group,
-                marker_color=AGG_COLORS.get(group, "#888"),
-                legendgroup=group,
-                showlegend=show_legend,
-                hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
-            ),
-            **subplot_kwargs,
-        )
-    for group in present_neg:
+    for group in neg_present + pos_present:
         vals = monthly_twh.reindex(months_present)[group].fillna(0)
         if vals.abs().sum() < 0.001:
             continue
@@ -686,232 +893,5 @@ def _add_monthly_stacked_bars(
         )
 
 
-# ── Energy mix chart builders ──
 
 
-def chart_energy_mix_annual(run_dir, areas):
-    """Annual energy mix: stacked bar chart with one bar per area, stacked by technology."""
-    path = run_dir / "outputs" / "production.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if "hour" not in df.columns or "area" not in df.columns:
-        return None
-
-    area_list, agg_data = _build_energy_agg(df, areas)
-    if not area_list:
-        return None
-
-    tec_display_cols = [c for c in agg_data.columns if c not in ("area", "hour")]
-    annual = agg_data.groupby("area")[tec_display_cols].sum() / 1000  # TWh
-
-    fig = go.Figure()
-    _add_stacked_bars(fig, area_list, annual)
-    fig.update_layout(yaxis_title="TWh", barmode="stack", height=600)
-    _apply_theme(fig)
-    fig.update_layout(margin_t=20)
-    return fig
-
-
-def chart_energy_mix_monthly(run_dir, areas):
-    """Monthly energy mix: stacked bar chart by month, one subplot per area."""
-    path = run_dir / "outputs" / "production.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if "hour" not in df.columns or "area" not in df.columns:
-        return None
-
-    area_list, agg_data = _build_energy_agg(df, areas)
-    if not area_list:
-        return None
-
-    agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
-    tec_display_cols = [c for c in agg_data.columns if c not in ("area", "hour", "month")]
-    n = len(area_list)
-
-    fig = make_subplots(
-        rows=n,
-        cols=1,
-        shared_xaxes=True,
-        subplot_titles=area_list if n > 1 else None,
-        vertical_spacing=0.02,
-    )
-    for row, area in enumerate(area_list, 1):
-        sub = agg_data[agg_data["area"] == area]
-        monthly = sub.groupby("month")[tec_display_cols].sum() / 1000  # TWh
-        months_present = sorted(monthly.index.tolist())
-        _add_monthly_stacked_bars(
-            fig, monthly, months_present, row=row, col=1, show_legend=(row == 1)
-        )
-        fig.update_yaxes(title_text="TWh", row=row, col=1)
-
-    fig.update_layout(barmode="stack", height=600 * n)
-    _apply_theme(fig)
-    fig.update_layout(margin_t=20)
-    return fig
-
-
-def chart_energy_mix_annual_validate(run_dir, areas):
-    """Annual energy mix: areas interleaved (sim / act) per area (--validate mode)."""
-    path = run_dir / "outputs" / "production.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if "hour" not in df.columns or "area" not in df.columns:
-        return None
-
-    area_list, agg_data = _build_energy_agg(df, areas)
-    if not area_list:
-        return None
-
-    tec_display_cols = [c for c in agg_data.columns if c not in ("area", "hour")]
-    annual_sim = agg_data.groupby("area")[tec_display_cols].sum() / 1000  # TWh
-
-    actual_df = _load_actual_production(run_dir)
-    if actual_df is None:
-        return chart_energy_mix_annual(run_dir, areas)
-
-    _, agg_actual = _build_energy_agg(actual_df, area_list)
-    if agg_actual is None:
-        return chart_energy_mix_annual(run_dir, areas)
-
-    tec_display_cols_act = [c for c in agg_actual.columns if c not in ("area", "hour")]
-    annual_act = agg_actual.groupby("area")[tec_display_cols_act].sum() / 1000  # TWh
-
-    # Interleaved x: [area1 (sim), area1 (act), area2 (sim), area2 (act), ...]
-    x_labels = [lbl for a in area_list for lbl in (f"{a} (sim)", f"{a} (act)")]
-
-    fig = go.Figure()
-    for group in AGG_ORDER_POS + AGG_ORDER_NEG:
-        y_vals = []
-        for area in area_list:
-            sim_val = (
-                float(annual_sim.at[area, group])
-                if area in annual_sim.index and group in annual_sim.columns
-                else 0.0
-            )
-            act_val = (
-                float(annual_act.at[area, group])
-                if area in annual_act.index and group in annual_act.columns
-                else 0.0
-            )
-            y_vals += [sim_val, act_val]
-        if sum(abs(v) for v in y_vals) < 0.001:
-            continue
-        fig.add_trace(
-            go.Bar(
-                x=x_labels,
-                y=y_vals,
-                name=group,
-                marker_color=AGG_COLORS.get(group, "#888"),
-                legendgroup=group,
-                hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
-            )
-        )
-
-    fig.update_layout(yaxis_title="TWh", barmode="stack", height=600)
-    _apply_theme(fig)
-    fig.update_layout(margin_t=20)
-    return fig
-
-
-def chart_energy_mix_monthly_validate(run_dir, areas):
-    """Monthly energy mix: months interleaved (sim / act) per area (--validate mode)."""
-    path = run_dir / "outputs" / "production.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if "hour" not in df.columns or "area" not in df.columns:
-        return None
-
-    area_list, agg_data = _build_energy_agg(df, areas)
-    if not area_list:
-        return None
-
-    agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
-    tec_display_cols = [c for c in agg_data.columns if c not in ("area", "hour", "month")]
-
-    actual_df = _load_actual_production(run_dir)
-    if actual_df is None:
-        return chart_energy_mix_monthly(run_dir, areas)
-
-    _, agg_actual = _build_energy_agg(actual_df, area_list)
-    if agg_actual is None:
-        return chart_energy_mix_monthly(run_dir, areas)
-
-    agg_actual["month"] = hour_to_cet_month(agg_actual["hour"])  # "YYYYMM" in CET
-    tec_display_cols_act = [c for c in agg_actual.columns if c not in ("area", "hour", "month")]
-
-    n = len(area_list)
-    fig = make_subplots(
-        rows=n,
-        cols=1,
-        shared_xaxes=False,
-        subplot_titles=area_list if n > 1 else None,
-        vertical_spacing=0.02,
-    )
-    for row, area in enumerate(area_list, 1):
-        sub_sim = agg_data[agg_data["area"] == area]
-        monthly_sim = sub_sim.groupby("month")[tec_display_cols].sum() / 1000
-
-        sub_act = (
-            agg_actual[agg_actual["area"] == area] if area in agg_actual["area"].values else None
-        )
-        monthly_act = (
-            sub_act.groupby("month")[tec_display_cols_act].sum() / 1000
-            if sub_act is not None and not sub_act.empty
-            else None
-        )
-
-        # Union of all months, sorted, interleaved x
-        all_months = sorted(
-            set(monthly_sim.index) | (set(monthly_act.index) if monthly_act is not None else set())
-        )
-        x_labels = [
-            lbl
-            for m in all_months
-            for lbl in (
-                f"{_MONTH_LABELS.get(int(m[4:]), m)} (sim)",
-                f"{_MONTH_LABELS.get(int(m[4:]), m)} (act)",
-            )
-        ]
-
-        show_legend = row == 1
-        for group in AGG_ORDER_POS + AGG_ORDER_NEG:
-            y_vals = []
-            for m in all_months:
-                sim_val = (
-                    float(monthly_sim.at[m, group])
-                    if m in monthly_sim.index and group in monthly_sim.columns
-                    else 0.0
-                )
-                act_val = (
-                    float(monthly_act.at[m, group])
-                    if monthly_act is not None
-                    and m in monthly_act.index
-                    and group in monthly_act.columns
-                    else 0.0
-                )
-                y_vals += [sim_val, act_val]
-            if sum(abs(v) for v in y_vals) < 0.001:
-                continue
-            fig.add_trace(
-                go.Bar(
-                    x=x_labels,
-                    y=y_vals,
-                    name=group,
-                    marker_color=AGG_COLORS.get(group, "#888"),
-                    legendgroup=group,
-                    showlegend=show_legend,
-                    hovertemplate=f"{group}: %{{y:.2f}} TWh<extra></extra>",
-                ),
-                row=row,
-                col=1,
-            )
-        fig.update_yaxes(title_text="TWh", row=row, col=1)
-
-    fig.update_layout(barmode="stack", height=600 * n)
-    _apply_theme(fig)
-    fig.update_layout(margin_t=20)
-    return fig

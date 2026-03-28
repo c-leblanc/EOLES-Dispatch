@@ -161,7 +161,7 @@ def solve_run(
     project_dir=None,
     solver="highs",
     version="standard",
-    reports=None,
+    reports=["prices", "production"],
 ):
     """Solve an existing run.
 
@@ -180,17 +180,15 @@ def solve_run(
     import pyomo.environ  # noqa: F401 — registers solver plugins
     from pyomo.opt import SolverFactory
 
-    from ..format_outputs import (
+    from ..models import MODEL_REGISTRY
+    from .format_outputs import (
         report_capa_on,
         report_FRtrade,
         report_prices,
         report_production,
         write_log,
     )
-    from ..models import MODEL_REGISTRY
 
-    if reports is None:
-        reports = ["prices", "production"]
     if project_dir is None:
         project_dir = Path.cwd()
     else:

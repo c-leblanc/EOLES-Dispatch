@@ -5,7 +5,7 @@ mappings, and environment variables used across the pipeline.
 Loaded once at import time.
 
 Three technology nomenclature levels exist in the project:
-    - **raw**:   fuel types as collected from external sources (ENTSO-E, Elexon).
+    - **raw**:   production types as collected from external sources (ENTSO-E, Elexon).
                  Used in data/<year>/production_<area>.csv.
     - **model**: technologies as defined in the LP model scenarios.
                  Used in scenario CSVs and Pyomo sets.
@@ -205,5 +205,5 @@ MODEL_TO_AGG = {
     "nmd": "nmd",
 }
 
-# NMD fuel types, derived from RAW_TO_AGG (single source of truth).
+# NMD production types, derived from RAW_TO_AGG (single source of truth).
 NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]

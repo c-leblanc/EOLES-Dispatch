@@ -1,5 +1,5 @@
 tec,fuel_price,efficiency,eff50,co2_price,co2_factor,nonFuel_vOM,su_fuelCons,su_fixedCost,minTimeOFF,minTimeON,minSG,ramp_fuelCons,frr,thr_fuel
-nuclear,0.47,0.33,0.3,24.75,0,15.0,14.0,21.0,12,12,0.7,0.5,True,NUCLEAR
+nuclear,0.47,0.33,0.3,24.75,0,15.0,14.0,21.0,12,12,0.7,0.5,True,URANIUM
 coal_1G,2.0,0.35,0.3,24.75,94,3.3,18.0,69.69,8,8,0.43,0.35,False,COAL
 coal_SA,2.0,0.46,0.41,24.75,94,3.3,18.0,42.29,8,8,0.43,0.35,False,COAL
 lignite,1.0,0.38,0.34,24.75,101,3.3,18.0,50.12,11,11,0.43,0.45,False,LIGNITE

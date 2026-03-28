@@ -24,14 +24,14 @@ Functions:
         Called from main_collect.collect_demand.
 
     fetch_generation(start, end)
-        Fetch generation by fuel type from /generation/actual/per-type.
+        Fetch generation by production type from /generation/actual/per-type.
         Splits PHS into 'phs' (production, positive) and 'phs_in'
         (consumption, negative). Returns a DataFrame with 'hour' column
-        (naive UTC) and one column per fuel.
-        Called from main_collect.collect_production, fetch_generation_for_fuel.
+        (naive UTC) and one column per production.
+        Called from main_collect.collect_production, fetch_generation_for_prodtype.
 
-    fetch_generation_for_fuel(start, end, fuel)
-        Convenience wrapper: fetch_generation then extract a single fuel.
+    fetch_generation_for_prodtype(start, end, prodtype)
+        Convenience wrapper: fetch_generation then extract a single production type.
         Not currently called internally (available for ad-hoc use).
 
     fetch_day_ahead_prices(start, end, gbp_to_eur=1.18)
@@ -64,7 +64,7 @@ BASE_URL = "https://data.elexon.co.uk/bmrs/api/v1"
 # but empirically large ranges may time out. 7 days is safe and fast.
 _CHUNK_DAYS = 7
 
-# Elexon psrType → our internal fuel category mapping.
+# Elexon psrType → our internal production type category mapping.
 # Used to extract the right generation columns for NMD, VRE capacity factors, etc.
 PSR_MAP = {
     "Biomass": "biomass",
@@ -180,14 +180,14 @@ def fetch_demand(start, end):
     return series
 
 
-# ── Generation by fuel type ─────────────────────────────────────────────────
+# ── Generation by production type ─────────────────────────────────────────────────
 
 
 def fetch_generation(start, end):
-    """Fetch actual generation by fuel type for GB from Elexon, in MW.
+    """Fetch actual generation by production type for GB from Elexon, in MW.
 
     PHS is split into 'phs' (generation, positive) and 'phs_in'
-    (consumption, negative). All other fuel types appear as individual columns.
+    (consumption, negative). All other production types appear as individual columns.
 
     Args:
         start: Start datetime.
@@ -195,7 +195,7 @@ def fetch_generation(start, end):
 
     Returns:
         pd.DataFrame with 'hour' column (naive UTC) and one column per
-        fuel type. Values in MW. Returns None if no data.
+        production type. Values in MW. Returns None if no data.
     """
 
     records = []
@@ -222,7 +222,7 @@ def fetch_generation(start, end):
                 records.append(
                     {
                         "timestamp": ts,
-                        "fuel": our_name,
+                        "prodtype": our_name,
                         "value": gen.get("quantity", 0) or 0,
                     }
                 )
@@ -232,8 +232,8 @@ def fetch_generation(start, end):
         return None
 
     df = pd.DataFrame(records)
-    # Pivot to wide format: one column per fuel type
-    pivot = df.pivot_table(index="timestamp", columns="fuel", values="value", aggfunc="mean")
+    # Pivot to wide format: one column per production type
+    pivot = df.pivot_table(index="timestamp", columns="prodtype", values="value", aggfunc="mean")
     # Normalize each column to hourly naive UTC via shared helper
     result = pd.DataFrame({col: resample_to_hourly(pivot[col]) for col in pivot.columns})
 
@@ -250,19 +250,19 @@ def fetch_generation(start, end):
     return result.reset_index()
 
 
-def fetch_generation_for_fuel(start, end, fuel):
-    """Fetch generation for a single fuel type for GB, in MW.
+def fetch_generation_for_prodtype(start, end, prodtype):
+    """Fetch generation for a single production type for GB, in MW.
 
     Args:
-        fuel: One of our internal fuel names (e.g. "onshore", "solar", "nuclear").
+        prodtype: One of our internal production type names (e.g. "onshore", "solar", "nuclear").
 
     Returns:
         pd.Series indexed by hourly UTC timestamps, values in MW.
     """
     gen = fetch_generation(start, end)
-    if gen is None or fuel not in gen.columns:
+    if gen is None or prodtype not in gen.columns:
         return pd.Series(dtype=float)
-    return gen.set_index("hour")[fuel]
+    return gen.set_index("hour")[prodtype]
 
 
 # ── Day-ahead prices ────────────────────────────────────────────────────────
@@ -333,7 +333,7 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
 
 
 def fetch_installed_capacity(year):
-    """Fetch installed generation capacity per fuel type for GB, in MW.
+    """Fetch installed generation capacity per production type for GB, in MW.
 
     Uses the /datasets/IGCPU endpoint (B1420 — Installed Generation Capacity
     Per Unit) and sums by PSR type.
@@ -342,7 +342,7 @@ def fetch_installed_capacity(year):
         year: Calendar year (int).
 
     Returns:
-        dict {fuel_type: mw} using our internal fuel names, or None on failure.
+        dict {prodtype: mw} using our internal production type names, or None on failure.
     """
     data = _fetch_json(
         "/datasets/IGCPU",
@@ -356,13 +356,13 @@ def fetch_installed_capacity(year):
         return None
 
     # Sum installedCapacity by psrType, map to our internal names
-    capa_by_fuel = {}
+    capa_by_prodtype = {}
     for rec in data["data"]:
         our_name = PSR_MAP.get(rec.get("psrType", ""))
         if our_name is None:
             continue
         mw = rec.get("installedCapacity") or 0
         if mw > 0:
-            capa_by_fuel[our_name] = capa_by_fuel.get(our_name, 0) + mw
+            capa_by_prodtype[our_name] = capa_by_prodtype.get(our_name, 0) + mw
 
-    return capa_by_fuel if capa_by_fuel else None
+    return capa_by_prodtype if capa_by_prodtype else None

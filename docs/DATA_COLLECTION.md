@@ -14,7 +14,7 @@ EOLES-Dispatch requires hourly time series for every modeled country. Two data
 sources are used:
 
 - **ENTSO-E Transparency Platform** — historical actuals for electricity demand,
-  generation by fuel type, day-ahead prices, and installed capacities.
+  generation by production type, day-ahead prices, and installed capacities.
 - **Renewables.ninja** — simulated capacity factor profiles for variable
   renewable energy (wind, solar), based on MERRA-2 meteorological reanalysis.
 
@@ -420,7 +420,7 @@ unavailability:
 
 - **Entire area unavailable**: a warning is logged and the area is omitted from
   the output file. Other areas are collected normally.
-- **Aggregate NMD query fails**: each NMD fuel type is queried individually as a
+- **Aggregate NMD query fails**: each NMD production type is queried individually as a
   fallback.
 - **Installed capacity unavailable**: the observed production maximum is used as
   a proxy for capacity factor calculation. If the maximum is zero, a capacity of

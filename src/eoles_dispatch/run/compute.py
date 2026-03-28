@@ -19,7 +19,7 @@ def compute_nmd(production, areas, nmd_tecs=NMD_TYPES):
     NMD = sum of biomass, geothermal, marine, other_renew, waste, other.
 
     Args:
-        production: dict {area: DataFrame} with columns ['hour', fuel1, ...].
+        production: dict {area: DataFrame} with columns ['hour', prodtype1, ...].
             Already filtered to the simulation period. 'hour' is POSIX hours.
         areas: List of area codes.
 
@@ -58,7 +58,7 @@ def compute_vre_capacity_factors(
     Falls back to max(hourly_production) when installed capacity is unavailable.
 
     Args:
-        production: dict {area: DataFrame} with columns ['hour', fuel1, ...].
+        production: dict {area: DataFrame} with columns ['hour', prodtype1, ...].
             Already filtered to the simulation period. 'hour' is POSIX hours.
         installed_capa: DataFrame with tec as index and area codes as columns (MW).
             Loaded from data/<year>/installed_capacity.csv.

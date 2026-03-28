@@ -34,7 +34,7 @@ Functions:
         Called from main_collect.collect_exo_prices.
 
     fetch_generation(client, area, start, end)
-        Download all fuel types, extract per-fuel production, split PHS
+        Download all production types, extract per-type production, split PHS
         into phs (production, positive) and phs_in (consumption, negative),
         return as hourly naive UTC DataFrame.
         Called from main_collect.collect_production.
@@ -42,8 +42,8 @@ Functions:
 Internal helpers:
     _to_api_timestamps(start, end)
         Convert naive UTC to tz-aware CET for entsoe-py.
-    col_matches(col, fuel_type)
-        Match an ENTSO-E column name to our internal fuel type key.
+    col_matches(col, prodtype)
+        Match an ENTSO-E column name to our internal production type key.
     _resolve_area(area, start, end)
         Time-dependent area resolution (handles DE_AT_LU → DE_LU transition).
     _resolve_area_price(area, start, end)
@@ -51,7 +51,7 @@ Internal helpers:
 
 Constants:
     ENTSOE_COL_NAMES    Human-readable column name mapping.
-    PRODUCTION_FUELS    List of fuel types to extract (excl. PHS).
+    PRODUCTION_TYPES    List of production types to extract (excl. PHS).
 """
 
 import logging
@@ -179,20 +179,20 @@ ENTSOE_COL_NAMES = {
 }
 
 
-def col_matches(col, fuel_type):
-    """Check if an ENTSO-E DataFrame column matches a given fuel type.
+def col_matches(col, prodtype):
+    """Check if an ENTSO-E DataFrame column matches a given production type.
 
     Args:
         col: Column name — either a string or a tuple (name, aggregation_type).
-        fuel_type: Our internal fuel type key (e.g. 'biomass', 'phs', 'lake').
+        prodtype: Our internal production type key (e.g. 'biomass', 'phs', 'lake').
 
     Returns:
-        True if the column matches the fuel type.
+        True if the column matches the production type.
     """
     col_name = col[0] if isinstance(col, tuple) else col
     col_str = str(col_name)
     # Check human-readable names
-    for name in ENTSOE_COL_NAMES.get(fuel_type, set()):
+    for name in ENTSOE_COL_NAMES.get(prodtype, set()):
         if name in col_str:
             return True
     return False
@@ -300,18 +300,18 @@ def fetch_day_ahead_prices(client, area, start, end):
     return pd.concat(parts).sort_index()
 
 
-# ── Generation by fuel type ──
+# ── Generation by production type ──
 
-# Fuel types to extract from ENTSO-E multi-level generation columns.
+# production types to extract from ENTSO-E multi-level generation columns.
 # PHS is handled separately (needs both production and consumption).
 # Derived from RAW_TO_AGG keys, excluding phs/phs_in which are special-cased.
-PRODUCTION_FUELS = [k for k in RAW_TO_AGG if k not in ("phs", "phs_in")]
+PRODUCTION_TYPES = [k for k in RAW_TO_AGG if k not in ("phs", "phs_in")]
 
 
 def fetch_generation(client, area, start, end):
-    """Fetch hourly generation by fuel type from ENTSO-E.
+    """Fetch hourly generation by production type from ENTSO-E.
 
-    Downloads all PSR types at once and extracts per-fuel production.
+    Downloads all PSR types at once and extracts per-type production.
     PHS is split into 'phs' (generation, positive) and 'phs_in'
     (consumption, negative). All series are converted to hourly naive UTC.
     For DE, splits at the Oct 2018 zone transition.
@@ -323,7 +323,7 @@ def fetch_generation(client, area, start, end):
 
     Returns:
         pd.DataFrame with 'hour' column (naive UTC) and one column per
-        fuel type found. PHS appears as 'phs' and 'phs_in'.
+        production type found. PHS appears as 'phs' and 'phs_in'.
         Returns None if the download fails or returns empty data.
     """
     periods = _resolve_area(area, start, end)
@@ -339,11 +339,11 @@ def fetch_generation(client, area, start, end):
 
     result = {}
 
-    for fuel in PRODUCTION_FUELS:
+    for production_type in PRODUCTION_TYPES:
         prod_series = pd.Series(0, index=raw.index, dtype=float)
         found = False
         for col in raw.columns:
-            if col_matches(col, fuel):
+            if col_matches(col, production_type):
                 if isinstance(col, tuple) and col[1] == "Actual Aggregated":
                     prod_series = prod_series.add(raw[col], fill_value=0)
                     found = True
@@ -351,7 +351,7 @@ def fetch_generation(client, area, start, end):
                     prod_series = prod_series.add(raw[col], fill_value=0)
                     found = True
         if found:
-            result[fuel] = resample_to_hourly(prod_series)
+            result[production_type] = resample_to_hourly(prod_series)
 
     # PHS: extract production (positive) and consumption (negative)
     phs_gen = pd.Series(0, index=raw.index, dtype=float)
@@ -379,7 +379,7 @@ def fetch_generation(client, area, start, end):
 
 
 def fetch_installed_capacity(client, area, year):
-    """Fetch installed generation capacity per fuel type for a year, in MW.
+    """Fetch installed generation capacity per production type for a year, in MW.
 
     Uses query_installed_generation_capacity (ENTSO-E 14.1.A) which returns
     a DataFrame with PSR-type columns and yearly/monthly snapshots as rows.
@@ -391,7 +391,7 @@ def fetch_installed_capacity(client, area, year):
         year: Calendar year (int).
 
     Returns:
-        dict {fuel_type: mw} using our internal fuel names, or None on failure.
+        dict {prodtype: mw} using our internal production type names, or None on failure.
     """
     start = pd.Timestamp(year=year, month=1, day=1)
     end = pd.Timestamp(year=year, month=12, day=31)
@@ -411,10 +411,10 @@ def fetch_installed_capacity(client, area, year):
 
     snapshot = pd.concat(parts).max()  # peak over year
     result = {}
-    for fuel_type in ENTSOE_COL_NAMES:
-        cols = [c for c in snapshot.index if col_matches(c, fuel_type)]
+    for prodtype in ENTSOE_COL_NAMES:
+        cols = [c for c in snapshot.index if col_matches(c, prodtype)]
         if cols:
             val = snapshot[cols].sum()
             if val > 0:
-                result[fuel_type] = val
+                result[type] = val
     return result if result else None

@@ -402,7 +402,7 @@ class TestModelEdgeCases:
         tec = ["nmd"] + vre + thr + sto
         frr = thr + sto
         no_frr = vre + ["nmd"]
-        fuels = ["NUCLEAR"]
+        fuels = ["URANIUM"]
 
         _write_1col(d / "areas.csv", areas)
         _write_1col(d / "exo_areas.csv", exo_areas)

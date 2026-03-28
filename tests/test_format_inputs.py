@@ -61,14 +61,14 @@ class TestCetToUtc:
 # ---------------------------------------------------------------------------
 
 
-def _make_production(areas, n_hours=24, fuels=None):
+def _make_production(areas, n_hours=24, prodtypes=None):
     """Create a mock production dict for testing compute_* functions.
 
     Returns production with 'hour' as POSIX hours (int), matching the
     pre-filtered format expected by all compute_* functions.
     """
-    if fuels is None:
-        fuels = [
+    if prodtypes is None:
+        prodtypes = [
             "biomass",
             "gas",
             "nuclear",
@@ -91,8 +91,8 @@ def _make_production(areas, n_hours=24, fuels=None):
     hours_posix = to_posix_hours(hours_dt.to_series())
     for area in areas:
         data = {"hour": hours_posix.values}
-        for fuel in fuels:
-            data[fuel] = rng.uniform(0, 1000, n_hours)
+        for production_type in prodtypes:
+            data[production_type] = rng.uniform(0, 1000, n_hours)
         # phs_in is negative at all levels (consumption)
         if "phs_in" in data:
             data["phs_in"] = -np.abs(data["phs_in"])
@@ -101,15 +101,15 @@ def _make_production(areas, n_hours=24, fuels=None):
 
 
 class TestComputeNmd:
-    def test_nmd_sums_correct_fuels(self):
+    def test_nmd_sums_correct_prodtypes(self):
         """NMD should be the sum of biomass, geothermal, marine, other_renew, waste, other."""
         production = _make_production(["FR"], n_hours=4)
         nmd = compute_nmd(production, ["FR"])
 
         # Compute expected NMD manually
         df = production["FR"]
-        nmd_fuels = ["biomass", "geothermal", "marine", "other_renew", "waste", "other"]
-        expected = df[nmd_fuels].sum(axis=1).values / 1000  # MW → GW
+        nmd_prodtypes = ["biomass", "geothermal", "marine", "other_renew", "waste", "other"]
+        expected = df[nmd_prodtypes].sum(axis=1).values / 1000  # MW → GW
 
         fr_nmd = nmd[nmd["area"] == "FR"].sort_values("hour")
         np.testing.assert_array_almost_equal(fr_nmd["value"].values, expected, decimal=6)
@@ -183,7 +183,7 @@ class TestComputeNuclearMaxAf:
     def test_nuclear_af_no_nuclear_full_availability(self):
         """Areas without nuclear data should get AF=1.0."""
         production = _make_production(
-            ["CH"], n_hours=168, fuels=["gas", "solar"]
+            ["CH"], n_hours=168, prodtypes=["gas", "solar"]
         )  # no nuclear column
         _, hour_week = compute_hour_mappings(2021)
         nuc_af = compute_nuclear_max_af(production, None, ["CH"], hour_week)
@@ -343,9 +343,9 @@ def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True)
     pd.DataFrame({"hour": hours, **{a: [50.0] * n for a in exo_areas}}).to_csv(
         tmp_path / "exo_prices.csv", index=False
     )
-    fuels = ["biomass", "gas", "nuclear", "solar", "onshore"]
+    production_types = ["biomass", "gas", "nuclear", "solar", "onshore"]
     for area in areas:
-        pd.DataFrame({"hour": hours, **{f: [100.0] * n for f in fuels}}).to_csv(
+        pd.DataFrame({"hour": hours, **{f: [100.0] * n for f in production_types}}).to_csv(
             tmp_path / f"production_{area}.csv", index=False
         )
     if include_actual_prices:
