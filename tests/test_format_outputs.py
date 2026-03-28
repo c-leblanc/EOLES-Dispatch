@@ -16,13 +16,13 @@ class TestSafeGeneValues:
             ("FR", "nuclear", 0): 10.0,
             ("FR", "nuclear", 1): 20.0,
         }
-        result = _safe_gene_values(gene_vals, "nuclear", 2)
+        result = _safe_gene_values(gene_vals, "nuclear", 2, areas=["FR"], hours=[0, 1])
         np.testing.assert_array_equal(result, [10.0, 20.0])
 
     def test_safe_gene_values_missing_tec(self):
         """Missing technology returns an array of zeros."""
         gene_vals = {("FR", "nuclear", 0): 10.0}
-        result = _safe_gene_values(gene_vals, "solar", 3)
+        result = _safe_gene_values(gene_vals, "solar", 3, areas=["FR"], hours=[0, 1, 2])
         np.testing.assert_array_equal(result, [0.0, 0.0, 0.0])
 
     def test_safe_gene_values_none_replaced_by_zero(self):
@@ -31,22 +31,22 @@ class TestSafeGeneValues:
             ("FR", "wind", 0): None,
             ("FR", "wind", 1): 5.0,
         }
-        result = _safe_gene_values(gene_vals, "wind", 2)
+        result = _safe_gene_values(gene_vals, "wind", 2, areas=["FR"], hours=[0, 1])
         np.testing.assert_array_equal(result, [0.0, 5.0])
 
     def test_safe_gene_values_sorted_order(self):
-        """Keys are sorted, so ('BE',...) comes before ('DE',...)."""
+        """Values follow the order of areas × hours."""
         gene_vals = {
             ("DE", "nuc", 0): 30.0,
             ("BE", "nuc", 0): 10.0,
         }
-        result = _safe_gene_values(gene_vals, "nuc", 2)
+        result = _safe_gene_values(gene_vals, "nuc", 2, areas=["BE", "DE"], hours=[0])
         np.testing.assert_array_equal(result, [10.0, 30.0])
 
     def test_safe_gene_values_length(self):
         """Output length matches n_rows when technology exists."""
         gene_vals = {("FR", "gas", i): float(i) for i in range(5)}
-        result = _safe_gene_values(gene_vals, "gas", 5)
+        result = _safe_gene_values(gene_vals, "gas", 5, areas=["FR"], hours=list(range(5)))
         assert len(result) == 5
 
 
@@ -62,13 +62,13 @@ class TestSafeVarValues:
             ("FR", "battery", 0): 100.0,
             ("FR", "battery", 1): 200.0,
         }
-        result = _safe_var_values(var_vals, "battery", 2)
+        result = _safe_var_values(var_vals, "battery", 2, areas=["FR"], hours=[0, 1])
         np.testing.assert_array_equal(result, [100.0, 200.0])
 
     def test_safe_var_values_missing(self):
         """Missing technology returns zeros."""
         var_vals = {("FR", "battery", 0): 100.0}
-        result = _safe_var_values(var_vals, "phs", 4)
+        result = _safe_var_values(var_vals, "phs", 4, areas=["FR"], hours=[0, 1, 2, 3])
         np.testing.assert_array_equal(result, [0.0, 0.0, 0.0, 0.0])
 
     def test_safe_var_values_none_to_zero(self):
@@ -77,5 +77,5 @@ class TestSafeVarValues:
             ("DE", "storage", 0): None,
             ("DE", "storage", 1): 50.0,
         }
-        result = _safe_var_values(var_vals, "storage", 2)
+        result = _safe_var_values(var_vals, "storage", 2, areas=["DE"], hours=[0, 1])
         np.testing.assert_array_equal(result, [0.0, 50.0])

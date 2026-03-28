@@ -47,7 +47,7 @@ _load_dotenv()
 ## Model Parameters
 # ------------------
 
-LOAD_UNCERTAINTY = 0.01  # Uncertainty coefficient for hourly demand
+LOAD_UNCERTAINTY = 0.05  # Uncertainty coefficient for hourly demand
 DELTA = 0.1  # Load variation factor
 VOLL = 15000  # Value of lost load in EUR/MWh (virtual cost of unserved demand)
 ETA_IN = pd.Series(
