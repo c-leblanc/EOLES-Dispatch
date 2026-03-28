@@ -373,12 +373,17 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
     Reads production_<area>.csv files from the year data directory, filters to
     the requested areas and time period, aggregates raw technology columns to
     the agg level (via RAW_TO_AGG), converts MW → GW, converts timestamps to
-    POSIX hours, and saves into validation/actual_production.csv.
+    POSIX hours.  Then joins demand from the run inputs and derives
+    net_imports / net_exports as demand minus total production.
+
+    The resulting CSV mirrors the column layout of outputs/production.csv:
+    area, hour, <tec_cols>, net_imports, net_exports, demand.
 
     Silently skips areas whose production file does not exist.
     """
     from datetime import datetime
 
+    import numpy as np
     import pandas as pd
 
     from ..config import RAW_TO_AGG
@@ -431,9 +436,21 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
         return
 
     combined = pd.concat(area_frames, ignore_index=True)
-    # Reorder columns: area, hour, then sorted agg columns
-    tec_cols = [c for c in combined.columns if c not in ("area", "hour")]
-    combined = combined[["area", "hour"] + tec_cols]
+
+    # Join demand from run inputs (already in GW / POSIX hours)
+    demand_path = run_dir / "inputs" / "demand.csv"
+    demand = pd.read_csv(demand_path, header=None, names=["area", "hour", "demand"])
+    combined = combined.merge(demand, on=["area", "hour"], how="left")
+
+    # Derive net imports / exports = demand − total production
+    tec_cols = [c for c in combined.columns if c not in ("area", "hour", "demand")]
+    total_prod = combined[tec_cols].sum(axis=1)
+    net = combined["demand"] - total_prod
+    combined["net_imports"] = np.maximum(net, 0)
+    combined["net_exports"] = np.minimum(net, 0)
+
+    # Reorder to match outputs/production.csv layout
+    combined = combined[["area", "hour"] + tec_cols + ["net_imports", "net_exports", "demand"]]
 
     validation_dir = run_dir / "validation"
     validation_dir.mkdir(exist_ok=True)

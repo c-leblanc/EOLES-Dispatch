@@ -60,7 +60,7 @@ def _load_actual_production(run_dir):
             months = (int(ms), int(ms))
 
     data_dir = run_dir.parent.parent / "data"
-    df = _aggregate_actual_production(data_dir, year, areas, months)
+    df = _aggregate_actual_production(data_dir, run_dir, year, areas, months)
     if df is None:
         return None
 
@@ -70,13 +70,18 @@ def _load_actual_production(run_dir):
     return df
 
 
-def _aggregate_actual_production(data_dir, year, areas, months):
+def _aggregate_actual_production(data_dir, run_dir, year, areas, months):
     """Aggregate raw production CSVs to agg level (GW) for the given period.
 
-    Returns a DataFrame with columns [area, hour, <agg_tec>...] using POSIX hours,
-    or None if no source files are found.
+    Joins demand from the run inputs and derives net_imports / net_exports as
+    demand minus total production, mirroring the layout of outputs/production.csv.
+
+    Returns a DataFrame with columns [area, hour, <agg_tec>..., net_imports,
+    net_exports, demand] using POSIX hours, or None if no source files are found.
     """
     from datetime import datetime as _dt
+
+    import numpy as np
 
     from ..config import RAW_TO_AGG
     from ..utils import cet_to_utc, cet_year_bounds
@@ -119,8 +124,27 @@ def _aggregate_actual_production(data_dir, year, areas, months):
         return None
 
     combined = pd.concat(area_frames, ignore_index=True)
-    tec_cols = [c for c in combined.columns if c not in ("area", "hour")]
-    return combined[["area", "hour"] + tec_cols]
+
+    # Join demand from run inputs (already in GW / POSIX hours)
+    demand_path = run_dir / "inputs" / "demand.csv"
+    if demand_path.exists():
+        demand = pd.read_csv(demand_path, header=None, names=["area", "hour", "demand"])
+        combined = combined.merge(demand, on=["area", "hour"], how="left")
+
+        # Derive net imports / exports = demand − total production
+        tec_cols = [c for c in combined.columns if c not in ("area", "hour", "demand")]
+        total_prod = combined[tec_cols].sum(axis=1)
+        net = combined["demand"] - total_prod
+        combined["net_imports"] = np.maximum(net, 0)
+        combined["net_exports"] = np.minimum(net, 0)
+    else:
+        tec_cols = [c for c in combined.columns if c not in ("area", "hour")]
+
+    return combined[
+        ["area", "hour"]
+        + tec_cols
+        + [c for c in ("net_imports", "net_exports", "demand") if c in combined.columns]
+    ]
 
 
 def _load_metadata(run_dir):

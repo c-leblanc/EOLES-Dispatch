@@ -132,12 +132,12 @@ EOLES-Dispatch/
 ├── src/eoles_dispatch/
 │   ├── __main__.py                 # CLI entry point
 │   ├── config.py                   # Model constants & default parameters
-│   ├── format_outputs.py           # Result extraction & export
 │   ├── utils.py                    # Utility functions
 │   ├── run/                        # Run orchestration module
 │   │   ├── __init__.py
 │   │   ├── _main_run.py            # Run lifecycle (create, solve, list)
 │   │   ├── format_inputs.py        # Data loading & preprocessing
+│   |   ├── format_outputs.py       # Result extraction & export
 │   │   ├── compute.py              # Model building & solving
 │   │   └── scenario.py             # Scenario loading & management
 │   ├── collect/                    # Data collection module

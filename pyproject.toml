@@ -31,6 +31,7 @@ xlsx = [
 ]
 viz = [
     "plotly>=5.0",
+    "matplotlib>=3.5",
 ]
 dev = [
     "pytest>=7.0",
@@ -40,6 +41,7 @@ dev = [
     "urllib3<2",
     "openpyxl>=3.0",
     "plotly>=5.0",
+    "matplotlib>=3.5",
 ]
 
 [project.scripts]

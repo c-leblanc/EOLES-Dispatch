@@ -1,5 +1,6 @@
 """Chart registries, renderer, and main HTML report generator."""
 
+import functools
 import webbrowser
 from pathlib import Path
 
@@ -14,16 +15,13 @@ from .charts_inputs import (
     chart_vre_profiles,
 )
 from .charts_outputs import (
-    chart_energy_mix_annual,
-    chart_energy_mix_annual_validate,
-    chart_energy_mix_monthly,
-    chart_energy_mix_monthly_validate,
+    # chart_energy_mix_monthly,
+    # chart_energy_mix_monthly_validate,
     chart_price_scatter,
     chart_prices,
-    chart_prices_validate,
     chart_production,
+    html_energy_mix_overview,
     html_price_overview,
-    html_price_overview_validate,
 )
 from .loaders import _load_metadata
 
@@ -114,6 +112,7 @@ def generate_report(run_dir, open_browser=True, validate=False):
     else:
         solver_name = solver_name.upper()
     solver_info = solver_name if solver_name else ""
+    model_version = meta.get("model_version", "")
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -426,6 +425,7 @@ def generate_report(run_dir, open_browser=True, validate=False):
     <div class="meta-pill">Scenario <b>{meta.get("scenario", "?")}</b></div>
     <div class="meta-pill">Year <b>{meta.get("year", "?")}</b>{months_label}</div>
     <div class="meta-pill">Areas <b>{", ".join(all_areas)}</b></div>
+    <div class="meta-pill">Model <b>{model_version or "N/A"}</b></div>
     <div class="meta-pill">Solver: <b>{solver_info or "N/A"}</b></div>
     <div class="meta-pill">Created: <b>{meta.get("created", "?")[:16].replace("T", " ")}</b></div>
     {"<div class='meta-pill'>Solved: <b>" + meta.get("solved", "")[:16].replace("T", " ") + "</b></div>" if meta.get("solved") else ""}
@@ -500,24 +500,24 @@ _OUTPUT_CHARTS = [
     ("Prices", None),
     ("", html_price_overview),
     ("Energy Mix", None),
-    ("", chart_energy_mix_annual),
+    ("", html_energy_mix_overview),
     ("Prices — Details", None),
     ("Spot price", chart_prices),
     ("Energy Mix — Details", None),
-    ("Monthly breakdown", chart_energy_mix_monthly),
+    # ("Monthly breakdown", chart_energy_mix_monthly),
     ("Dispatch", chart_production),
 ]
 
 _OUTPUT_CHARTS_VALIDATE = [
     ("Prices", None),
-    ("", html_price_overview_validate),
+    ("", functools.partial(html_price_overview, validate=True)),
     ("Energy Mix", None),
-    ("", chart_energy_mix_annual_validate),
+    ("", functools.partial(html_energy_mix_overview, validate=True)),
     ("Prices — Details", None),
-    ("Spot price", chart_prices_validate),
+    ("Spot price", functools.partial(chart_prices, validate=True)),
     ("Simulated vs actual", chart_price_scatter),
     ("Energy Mix — Details", None),
-    ("Monthly breakdown", chart_energy_mix_monthly_validate),
+    # ("Monthly breakdown", chart_energy_mix_monthly_validate),
     ("Dispatch", chart_production),
 ]
 
@@ -540,9 +540,7 @@ def _render_charts(run_dir, chart_list, areas):
         if result is None:
             continue
         title_html = (
-            f'<div class="chart-label">{label}</div>'
-            if label and label[0].isupper()
-            else ""
+            f'<div class="chart-label">{label}</div>' if label and label[0].isupper() else ""
         )
         if isinstance(result, str):
             parts.append(f'<div class="chart-raw">{title_html}{result}</div>')

@@ -63,13 +63,15 @@ def report_production(model, run_dir):
     # Aggregate generation using MODEL_TO_AGG: group model techs by agg name and sum
     agg_groups = defaultdict(lambda: np.zeros(n_rows))
     for model_tec, agg_name in MODEL_TO_AGG.items():
-        agg_groups[agg_name] += _safe_gene_values(gene_vals, model_tec, n_rows)
+        agg_groups[agg_name] += _safe_gene_values(gene_vals, model_tec, n_rows, areas, hours)
     for agg_name, values in agg_groups.items():
         production[agg_name] = values.tolist()
 
     # Storage charging (negative = consumption)
-    production["phs_in"] = (-_safe_var_values(stor_vals, "lake_phs", n_rows)).tolist()
-    production["battery_in"] = (-_safe_var_values(stor_vals, "battery", n_rows)).tolist()
+    production["phs_in"] = (-_safe_var_values(stor_vals, "lake_phs", n_rows, areas, hours)).tolist()
+    production["battery_in"] = (
+        -_safe_var_values(stor_vals, "battery", n_rows, areas, hours)
+    ).tolist()
 
     # Net imports per area: sum over all trading partners
     exo_areas = list(model.exo_a)
@@ -120,12 +122,12 @@ def report_capa_on(model, run_dir):
     thr_tecs = list(model.thr)
 
     capa_on = pd.DataFrame(index=range(n_rows))
-    areas = sorted(model.a)
+    areas = [a for a in DEFAULT_AREAS if a in model.a]
     hours = sorted(model.h)
     capa_on["area"] = np.repeat(areas, len(hours), axis=0)
     capa_on["hour"] = hours * len(areas)
     for thr in thr_tecs:
-        capa_on[thr] = _safe_var_values(on_vals, thr, n_rows).tolist()
+        capa_on[thr] = _safe_var_values(on_vals, thr, n_rows, areas, hours).tolist()
     capa_on = capa_on.set_index(["area", "hour"])
     capa_on.to_csv(output_dir / "capa_on.csv", index=True)
 
@@ -217,17 +219,25 @@ def _extract_var_values_bulk(var):
     return {k: v.value for k, v in var.items()}
 
 
-def _safe_gene_values(gene_vals, tec, n_rows):
-    """Extract generation values for a technology, returning zeros if it doesn't exist."""
-    keys = [k for k in gene_vals if k[1] == tec]
+def _safe_gene_values(gene_vals, tec, n_rows, areas, hours):
+    """Extract generation values for a technology, returning zeros if it doesn't exist.
+
+    Values are returned in the order defined by areas × hours to ensure
+    consistency with the DataFrame labels.
+    """
+    keys = {k for k in gene_vals if k[1] == tec}
     if not keys:
         return np.zeros(n_rows)
-    return np.array([gene_vals[k] or 0.0 for k in sorted(keys)])
+    return np.array([gene_vals.get((a, tec, h), 0) or 0.0 for a in areas for h in hours])
 
 
-def _safe_var_values(var_vals, tec, n_rows):
-    """Extract variable values for a technology, returning zeros if it doesn't exist."""
-    keys = [k for k in var_vals if k[1] == tec]
+def _safe_var_values(var_vals, tec, n_rows, areas, hours):
+    """Extract variable values for a technology, returning zeros if it doesn't exist.
+
+    Values are returned in the order defined by areas × hours to ensure
+    consistency with the DataFrame labels.
+    """
+    keys = {k for k in var_vals if k[1] == tec}
     if not keys:
         return np.zeros(n_rows)
-    return np.array([var_vals[k] or 0.0 for k in sorted(keys)])
+    return np.array([var_vals.get((a, tec, h), 0) or 0.0 for a in areas for h in hours])
