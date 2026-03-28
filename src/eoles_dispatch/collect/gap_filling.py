@@ -150,7 +150,10 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
     result = series.copy()
     gaps = _find_gaps(result)
     hours_per_week = 7 * 24
-    hours_per_year = 365 * 24
+    # 52 weeks (364 days) as the year-analogue offset: preserves the day-of-week
+    # alignment exactly, which matters more for electricity demand than the precise
+    # calendar date. Using 365/366 days would misalign weekdays by 1-2 days.
+    hours_per_52_weeks = 52 * hours_per_week
 
     for gap_start, gap_length in gaps:
         gap_hours = gap_length
@@ -201,10 +204,11 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                         filled = True
                         break
 
-        # Strategy 3: same week ±1 year (for gaps 48h-7d, or fallback)
+        # Strategy 3: same weekday ±52 weeks / ~1 year (for gaps 48h-7d, or fallback).
+        # 52-week offset preserves the day-of-week alignment exactly.
         if not filled and gap_hours <= hours_per_week:
             for sign in [-1, 1]:
-                offset = sign * hours_per_year
+                offset = sign * hours_per_52_weeks
                 fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                 if fill is not None:
                     result.iloc[gap_start : gap_start + gap_length] = fill.values
@@ -214,11 +218,12 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                     filled = True
                     break
 
-        # Strategy 4: multi-year average (for gaps > 7d, or fallback)
+        # Strategy 4: multi-year average (for gaps > 7d, or fallback).
+        # Same 52-week-multiple offsets for consistent weekday alignment.
         if not filled:
             candidates = []
             for year_offset in [-1, 1, -2, 2]:
-                offset = year_offset * hours_per_year
+                offset = year_offset * hours_per_52_weeks
                 fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                 if fill is not None:
                     candidates.append(fill.values)

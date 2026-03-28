@@ -253,6 +253,9 @@ def fetch_generation(start, end):
 def fetch_generation_for_prodtype(start, end, prodtype):
     """Fetch generation for a single production type for GB, in MW.
 
+    Convenience wrapper around fetch_generation() for single-type lookups.
+    Not called internally — available for ad-hoc analysis.
+
     Args:
         prodtype: One of our internal production type names (e.g. "onshore", "solar", "nuclear").
 
@@ -270,6 +273,9 @@ def fetch_generation_for_prodtype(start, end, prodtype):
 
 def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
     """Fetch day-ahead market index prices for GB from Elexon, in EUR/MWh.
+
+    Called internally from _main_collect.collect_actual_prices as the GB fallback
+    (post-Brexit, ENTSO-E no longer covers GB prices).
 
     Uses the N2EXMIDP (N2EX) data provider as the primary price reference.
     Falls back to APXMIDP if N2EX is unavailable.

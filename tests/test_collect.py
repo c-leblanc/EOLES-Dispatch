@@ -9,10 +9,8 @@ from eoles_dispatch.collect.gap_filling import Report, interpolate_gaps
 from eoles_dispatch.utils import (
     canonical_index,
     cet_year_bounds,
-    clip_to_range,
     expected_hours,
     resample_to_hourly,
-    to_UTC_hourly,
 )
 
 # ── col_matches ──
@@ -241,18 +239,3 @@ def test_interpolate_fills_all_nans():
     assert result.isna().sum() == 0
 
 
-# ── deprecated functions still work ──
-
-
-def test_deprecated_to_UTC_hourly():
-    s = _make_series("15min", 96)
-    result = to_UTC_hourly(s)
-    assert len(result) == 24
-
-
-def test_deprecated_clip_to_range():
-    idx = pd.date_range("2020-12-31 23:00", periods=8762, freq="h")
-    s = pd.Series(np.ones(len(idx)), index=idx)
-    result = clip_to_range(s, "2021-01-01", "2022-01-01")
-    assert result.index[0] == pd.Timestamp("2021-01-01 00:00")
-    assert result.index[-1] == pd.Timestamp("2021-12-31 23:00")

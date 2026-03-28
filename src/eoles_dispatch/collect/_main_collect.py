@@ -440,6 +440,10 @@ def collect_installed_capacity(client, areas, year, out_dir):
 
 # ── Exogenous prices ──
 
+# TODO: collect_exo_prices and collect_actual_prices are identical except for
+# the variable name passed to interpolate_gaps and the log label.
+# Factor into a single _collect_prices(client, areas, start, end, gap_report,
+# canon_idx, variable) and expose two thin wrappers.
 def collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx):
     """Collect day-ahead prices for exogenous (non-modeled) areas, in EUR/MWh.
 

@@ -15,9 +15,12 @@ Three technology nomenclature levels exist in the project:
 RAW_TO_AGG and MODEL_TO_AGG define the canonical mappings between levels.
 """
 
+import logging
 import os
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ---------------------
 ## Loading Environment

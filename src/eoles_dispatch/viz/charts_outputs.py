@@ -12,12 +12,11 @@ import plotly.graph_objects as go
 matplotlib.use("Agg")
 from plotly.subplots import make_subplots
 
-from ..utils import hour_to_cet_month
+from ..utils import hour_to_cet_month, posix_hours_to_dt
 from .loaders import (
     _country_color,
     _load_actual_prices,
     _load_actual_production,
-    _posix_hours_to_dt,
 )
 from .theme import (
     AGG_COLORS,
@@ -244,7 +243,7 @@ def chart_prices(run_dir, areas, *, validate=False):
     df = pd.read_csv(path)
     if "hour" not in df.columns:
         return None
-    df["datetime"] = _posix_hours_to_dt(df["hour"])
+    df["datetime"] = posix_hours_to_dt(df["hour"])
     cols = [c for c in areas if c in df.columns]
     if not cols:
         return None
@@ -874,7 +873,7 @@ def chart_production(run_dir, areas):
     if df.empty:
         return None
 
-    df["datetime"] = _posix_hours_to_dt(df["hour"])
+    df["datetime"] = posix_hours_to_dt(df["hour"])
     tec_cols = [c for c in df.columns if c not in ("hour", "area", "datetime", "demand")]
 
     # Aggregate technologies
@@ -975,6 +974,8 @@ def chart_production(run_dir, areas):
 
 # ── Energy mix helpers ──
 
+# TODO: _MONTH_LABELS is identical to _MONTH_NAMES defined in report.py.
+# Move to a shared constant in viz/__init__.py or a viz/utils.py module.
 _MONTH_LABELS = {
     1: "Jan",
     2: "Feb",
@@ -1001,7 +1002,7 @@ def _build_energy_agg(df, areas):
     if df.empty:
         return [], None
 
-    df["datetime"] = _posix_hours_to_dt(df["hour"])
+    df["datetime"] = posix_hours_to_dt(df["hour"])
     tec_cols = [c for c in df.columns if c not in ("hour", "area", "datetime", "demand")]
 
     agg_groups = {}

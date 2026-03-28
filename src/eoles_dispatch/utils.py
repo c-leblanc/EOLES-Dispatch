@@ -35,12 +35,12 @@ Functions:
                                               Called from format_inputs.
     hour_to_cet_week(utc_posix_hours)       - Map POSIX hours to CET week strings.
                                               Called from format_inputs.
+    cet_period_bounds(year, months)         - UTC bounds of a year or sub-period in CET.
+                                              Called from run._main_run, compute_hour_mappings.
+    posix_hours_to_dt(hours_series)         - POSIX hours (int) → UTC-aware Timestamps.
+                                              Called from viz/loaders, viz/charts_outputs.
     compute_hour_mappings(simul_year, ...)   - Compute hour-month and hour-week DataFrames.
                                               Called from run.create_run, format_inputs.
-
-Deprecated (kept for backward compatibility):
-    to_UTC_hourly(series)                   - Use resample_to_hourly instead.
-    clip_to_range(series, start, end)       - Use .reindex(canonical_index(year)) instead.
 """
 
 from datetime import datetime
@@ -88,26 +88,6 @@ def resample_to_hourly(series):
 
     return series
 
-
-# DEPRECATED: Use resample_to_hourly instead.
-def to_UTC_hourly(series):
-    """Resample a time series to hourly frequency (mean) and normalize to UTC tz-naive.
-
-    .. deprecated:: Use resample_to_hourly() instead.
-    """
-    return resample_to_hourly(series)
-
-
-# DEPRECATED: Use .reindex(canonical_index(year)) instead.
-def clip_to_range(series, start, end):
-    """Restrict a tz-naive UTC series to [start, end), dropping any overflow.
-
-    .. deprecated:: Use .reindex(canonical_index(year)) instead.
-    """
-    mask = (series.index >= pd.Timestamp(start)) & (series.index < pd.Timestamp(end))
-    return series.loc[mask]
-
-
 # CET bounds
 
 
@@ -148,6 +128,11 @@ def cet_week_bounds(year, week):
 def to_posix_hours(dt_series):
     """Convert a datetime Series to POSIX hours (int, hours since 1970-01-01 UTC)."""
     return ((dt_series - datetime(1970, 1, 1)).dt.total_seconds() / 3600).astype(int)
+
+
+def posix_hours_to_dt(hours_series):
+    """Convert POSIX hours (int, hours since 1970-01-01 UTC) to UTC-aware Timestamps."""
+    return pd.to_datetime(hours_series * 3600, unit="s", origin="unix", utc=True)
 
 
 # Mappings
@@ -204,6 +189,22 @@ def hour_to_cet_week(utc_posix_hours):
     return ts.dt.tz_convert(CET).dt.strftime("%Y%W")
 
 
+def cet_period_bounds(year, months=None):
+    """Return (utc_start, utc_end) for a year or sub-period in CET.
+
+    Args:
+        year: Calendar year.
+        months: Optional (start_month, end_month) tuple, e.g. (1, 3) for Jan-Mar.
+                None = full year (delegates to cet_year_bounds).
+    """
+    if months is None:
+        return cet_year_bounds(year)
+    start_m, end_m = months
+    start = cet_to_utc(datetime(year, start_m, 1))
+    end = cet_to_utc(datetime(year, end_m + 1, 1)) if end_m < 12 else cet_to_utc(datetime(year + 1, 1, 1))
+    return start, end
+
+
 def compute_hour_mappings(simul_year, months=None):
     """Compute hour_month and hour_week mapping DataFrames for a simulation period.
 
@@ -216,15 +217,7 @@ def compute_hour_mappings(simul_year, months=None):
         (hour_month, hour_week) where each is a DataFrame with columns
         ['hour', 'month'] or ['hour', 'week']. 'hour' is POSIX hours (int).
     """
-    if months:
-        start_m, end_m = months
-        start = cet_to_utc(datetime(simul_year, start_m, 1))
-        if end_m < 12:
-            end = cet_to_utc(datetime(simul_year, end_m + 1, 1))
-        else:
-            end = cet_to_utc(datetime(simul_year + 1, 1, 1))
-    else:
-        start, end = cet_year_bounds(simul_year)
+    start, end = cet_period_bounds(simul_year, months)
 
     # Generate hourly UTC timestamps for the period
     hours_index = pd.date_range(start, end, freq="h", inclusive="left")

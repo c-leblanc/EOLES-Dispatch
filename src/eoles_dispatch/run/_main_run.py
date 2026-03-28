@@ -161,7 +161,7 @@ def solve_run(
     project_dir=None,
     solver="highs",
     version="standard",
-    reports=["prices", "production"],
+    reports=None,
 ):
     """Solve an existing run.
 
@@ -188,6 +188,9 @@ def solve_run(
         report_production,
         write_log,
     )
+
+    if reports is None:
+        reports = ["prices", "production"]
 
     if project_dir is None:
         project_dir = Path.cwd()
@@ -330,11 +333,9 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
 
     Silently skips if actual_prices.csv does not exist.
     """
-    from datetime import datetime
-
     import pandas as pd
 
-    from ..utils import cet_to_utc, cet_year_bounds
+    from ..utils import cet_period_bounds, to_posix_hours
 
     src = data_dir / str(year) / "actual_prices.csv"
     if not src.exists():
@@ -342,21 +343,11 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
 
     df = pd.read_csv(src, parse_dates=["hour"])
 
-    # Filter to requested time period
-    if months:
-        start_m, end_m = months
-        start = cet_to_utc(datetime(year, start_m, 1))
-        if end_m < 12:
-            end = cet_to_utc(datetime(year, end_m + 1, 1))
-        else:
-            end = cet_to_utc(datetime(year + 1, 1, 1))
-    else:
-        start, end = cet_year_bounds(year)
-
+    start, end = cet_period_bounds(year, months)
     df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
 
     # Convert hour to POSIX hours (int)
-    df["hour"] = ((df["hour"] - pd.Timestamp("1970-01-01")).dt.total_seconds() / 3600).astype(int)
+    df["hour"] = to_posix_hours(df["hour"])
 
     # Keep only requested areas
     cols = ["hour"] + [a for a in areas if a in df.columns]
@@ -381,23 +372,13 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
 
     Silently skips areas whose production file does not exist.
     """
-    from datetime import datetime
-
     import numpy as np
     import pandas as pd
 
     from ..config import RAW_TO_AGG
-    from ..utils import cet_to_utc, cet_year_bounds
+    from ..utils import cet_period_bounds, to_posix_hours
 
-    if months:
-        start_m, end_m = months
-        start = cet_to_utc(datetime(year, start_m, 1))
-        if end_m < 12:
-            end = cet_to_utc(datetime(year, end_m + 1, 1))
-        else:
-            end = cet_to_utc(datetime(year + 1, 1, 1))
-    else:
-        start, end = cet_year_bounds(year)
+    start, end = cet_period_bounds(year, months)
 
     area_frames = []
     for area in areas:
@@ -410,7 +391,8 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
         if df.empty:
             continue
 
-        # Aggregate raw columns → agg categories
+        # TODO: this RAW_TO_AGG aggregation loop (raw cols → agg categories, MW→GW)
+        # is the canonical implementation. Extract to a shared helper in collect/ or utils.
         agg_cols = {}
         for raw_col, agg_name in RAW_TO_AGG.items():
             if raw_col not in df.columns:
@@ -426,9 +408,7 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
             result[agg_name] = vals / 1000.0
 
         # Convert hour to POSIX hours (int)
-        result["hour"] = (
-            (result["hour"] - pd.Timestamp("1970-01-01")).dt.total_seconds() / 3600
-        ).astype(int)
+        result["hour"] = to_posix_hours(result["hour"])
 
         area_frames.append(result)
 
