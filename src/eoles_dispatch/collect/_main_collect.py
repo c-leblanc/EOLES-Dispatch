@@ -122,17 +122,23 @@ def collect_all(
                     f"skipping (use --force to re-download)"
                 )
                 continue
-            elif partial_dir.exists():
-                logger.info(f"Data for {year} present locally is partial: removing and redownloading...")
-                shutil.rmtree(partial_dir)
             elif corrupt_dir.exists():
-                logger.info(f"Data for {year} present locally is corrupt: removing and redownloading...")
-                shutil.rmtree(corrupt_dir)
+                logger.info(f"Data for {year} present locally is corrupt: removing corrupt files and redownloading them...")
+                # Remove only files with 'corrupt' in the name
+                for f in corrupt_dir.glob("*corrupt*"):
+                    f.unlink()
+                corrupt_dir.rename(partial_dir)
+            elif partial_dir.exists(): #Case were a collect_all was interrupted before completion and validation
+                logger.info(f"Data for {year} was not fully downloaded: checking if present files are valid...")
+                _validate_year(partial_dir, year, areas, exo_areas)
+                # Remove corrupt files (renamed by _validate_year) so they get re-downloaded
+                for f in partial_dir.glob("*corrupt*"):
+                    f.unlink()
             else:
                 logger.info(f"No data for {year}: downloading...")
+                partial_dir.mkdir(parents=True)
 
             # Launch download of history data for <year>
-            partial_dir.mkdir(parents=True)
             collect_history(output_dir=partial_dir, client=client, year=year, areas=areas, exo_areas=exo_areas)
             
             # Validate history data for <year>
@@ -209,35 +215,61 @@ def collect_history(
 
     # 1. Demand (collect_demand returns GW, store as MW for raw data)
     logger.info("=== Demand ===")
-    demand = collect_demand(client, areas, start, end, gap_report, canon_idx)
-    demand_mw = demand.copy()
-    area_cols = [c for c in demand_mw.columns if c != "hour"]
-    demand_mw[area_cols] = demand_mw[area_cols] * 1000  # GW → MW
-    demand_mw.to_csv(output_dir / "demand.csv", index=False)
-    logger.info(f"  → demand.csv ({len(demand_mw)} rows)")
+    demand_path = output_dir / "demand.csv"
+    if not demand_path.exists():
+        demand = collect_demand(client, areas, start, end, gap_report, canon_idx)
+        demand_mw = demand.copy()
+        area_cols = [c for c in demand_mw.columns if c != "hour"]
+        demand_mw[area_cols] = demand_mw[area_cols] * 1000  # GW → MW
+        demand_mw.to_csv(demand_path, index=False)
+        logger.info(f"  → demand.csv ({len(demand_mw)} rows)")
+    else:
+        logger.info("  → demand.csv already exists, skipping")
 
     # 2. Raw production per area
     logger.info("=== Production ===")
-    production = collect_production(client, areas, start, end, gap_report, canon_idx)
-    for area, prod_df in production.items():
-        prod_df.to_csv(output_dir / f"production_{area}.csv", index=False)
-        logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} production types)")
+    # Filter out areas that already have production files
+    areas_prod_missing = [a for a in areas if not (output_dir / f"production_{a}.csv").exists()]
+    if areas_prod_missing:
+        if areas_prod_missing != areas:
+            areas_prod_existing = [a for a in areas if a not in areas_prod_missing]
+            logger.info(f"  → production already available for {areas_prod_existing}, downloading missing: {areas_prod_missing}")
+        production = collect_production(client, areas_prod_missing, start, end, gap_report, canon_idx)
+        for area, prod_df in production.items():
+            prod_df.to_csv(output_dir / f"production_{area}.csv", index=False)
+            logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} production types)")
+    else:
+        logger.info("  → all production files already exist, skipping")
 
     # 3. Installed capacity per area
     logger.info("=== Installed capacity ===")
-    collect_installed_capacity(client, areas, year, output_dir)
+    installed_capacity_path = output_dir / "installed_capacity.csv"
+    if not installed_capacity_path.exists():
+        installed_capacity = collect_installed_capacity(client, areas, year)
+        installed_capacity.to_csv(installed_capacity_path, index=True)
+        logger.info(f"  → installed_capacity.csv ({len(installed_capacity)} technologies, {len(installed_capacity.columns)} areas)")
+    else:
+        logger.info("  → installed_capacity.csv already exists, skipping")
 
     # 4. Exogenous prices
     logger.info("=== Exogenous prices ===")
-    exo_prices = collect_prices(client, exo_areas, start, end, gap_report, canon_idx)
-    exo_prices.to_csv(output_dir / "exo_prices.csv", index=False)
-    logger.info(f"  → exoPrices.csv ({len(exo_prices)} rows)")
+    exo_prices_path = output_dir / "exo_prices.csv"
+    if not exo_prices_path.exists():
+        exo_prices = collect_prices(client, exo_areas, start, end, gap_report, canon_idx)
+        exo_prices.to_csv(exo_prices_path, index=False)
+        logger.info(f"  → exo_prices.csv ({len(exo_prices)} rows)")
+    else:
+        logger.info("  → exo_prices.csv already exists, skipping")
 
     # 5. Actual prices for modeled areas (validation, not model input)
     logger.info("=== Actual prices (modeled areas) ===")
-    actual_prices = collect_prices(client, areas, start, end, gap_report, canon_idx)
-    actual_prices.to_csv(output_dir / "actual_prices.csv", index=False)
-    logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
+    actual_prices_path = output_dir / "actual_prices.csv"
+    if not actual_prices_path.exists():
+        actual_prices = collect_prices(client, areas, start, end, gap_report, canon_idx)
+        actual_prices.to_csv(actual_prices_path, index=False)
+        logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
+    else:
+        logger.info("  → actual_prices.csv already exists, skipping")
 
     # Save gap-fill report in the year directory
     gap_report.save(output_dir)
@@ -394,17 +426,18 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
 
 # ── Installed capacity ──
 
-def collect_installed_capacity(client, areas, year, out_dir):
+def collect_installed_capacity(client, areas, year):
     """Collect installed generation capacity per production type for each area.
 
-    ENTSO-E primary, Elexon fallback for UK. Saves installed_capacity.csv
-    in wide format: technologies in rows, areas in columns (MW).
+    ENTSO-E primary, Elexon fallback for UK.
 
     Args:
         client: EntsoePandasClient.
         areas: List of area codes.
         year: Calendar year.
-        out_dir: Path to write installed_capacity.csv.
+
+    Returns:
+        pd.DataFrame in wide format: technologies in rows, areas in columns (MW).
     """
     rows = []
     for area in areas:
@@ -438,8 +471,7 @@ def collect_installed_capacity(client, areas, year, out_dir):
     long = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["area", "tec", "value"])
     df = long.pivot(index="tec", columns="area", values="value").fillna(0)
     df.columns.name = None  # drop "area" header above column names
-    df.to_csv(out_dir / "installed_capacity.csv")
-    logger.info(f"  → installed_capacity.csv ({len(df)} technologies, {len(df.columns)} areas)")
+    return df
 
 
 # ── Prices ──
@@ -513,9 +545,11 @@ def _validate_year(year_dir, year, areas, exo_areas):
         df = pd.read_csv(demand_path)
         if len(df) != n_expected:
             issues.append(f"demand.csv: {len(df)} rows, expected {n_expected}")
+            demand_path.rename(demand_path.with_name("demand_corrupt.csv"))
         if df.drop(columns=["hour"], errors="ignore").isna().any().any():
             n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
             issues.append(f"demand.csv: {n_nan} NaN values remain")
+            demand_path.rename(demand_path.with_name("demand_corrupt.csv"))
 
     # Check exo_prices.csv
     exo_path = year_dir / "exo_prices.csv"
@@ -525,12 +559,15 @@ def _validate_year(year_dir, year, areas, exo_areas):
         df = pd.read_csv(exo_path)
         if len(df) != n_expected:
             issues.append(f"exo_prices.csv: {len(df)} rows, expected {n_expected}")
+            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
         missing_exo = set(exo_areas) - (set(df.columns) - {"hour"})
         if missing_exo:
             issues.append(f"exo_prices.csv: missing areas {missing_exo}")
+            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
         if df.drop(columns=["hour"], errors="ignore").isna().any().any():
             n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
             issues.append(f"exo_prices.csv: {n_nan} NaN values remain")
+            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
 
     # Check production files
     for area in areas:
@@ -541,9 +578,11 @@ def _validate_year(year_dir, year, areas, exo_areas):
             df = pd.read_csv(prod_path)
             if len(df) != n_expected:
                 issues.append(f"production_{area}.csv: {len(df)} rows, expected {n_expected}")
+                prod_path.rename(prod_path.with_name(f"production_{area}_corrupt.csv"))
             if df.drop(columns=["hour"], errors="ignore").isna().any().any():
                 n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
                 issues.append(f"production_{area}.csv: {n_nan} NaN values remain")
+                prod_path.rename(prod_path.with_name(f"production_{area}_corrupt.csv"))
 
     # Check actual_prices.csv (soft validation — warnings only, does not block)
     actual_path = year_dir / "actual_prices.csv"

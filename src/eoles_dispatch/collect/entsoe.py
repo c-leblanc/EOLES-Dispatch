@@ -327,7 +327,7 @@ def is_usable(series, start, end):
 # ── Retry on transient failure
 
 _MAX_ATTEMPTS = 5
-_RETRY_DELAYS = [10, 30, 60, 120, 300]  # seconds after each failed attempt
+_RETRY_DELAYS = [5, 10, 30, 60, 120, 300]  # seconds before each attempt
 
 def _call_with_retry(fn, *args, **kwargs):
     """Call an ENTSO-E API function, retrying on transient errors.
@@ -337,15 +337,15 @@ def _call_with_retry(fn, *args, **kwargs):
     are re-raised immediately.
     """
     last_exc = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
+    for attempt in range(0, _MAX_ATTEMPTS):
+        delay = _RETRY_DELAYS[attempt]
         if attempt > 1:
-            delay = _RETRY_DELAYS[attempt - 2]
             print(
                 f"{_error_label(last_exc)} -> Attempt {attempt}/{_MAX_ATTEMPTS}... ",
                 end="",
                 flush=True,
             )
-            time.sleep(delay)
+        time.sleep(delay)
         try:
             return fn(*args, **kwargs)
         except Exception as e:
@@ -458,6 +458,14 @@ def _resolve_area(area, start, end):
             return [("DE_LU", s, e)]
         else:
             return [("DE_AT_LU", s, _DE_TRANSITION), ("DE_LU", _DE_TRANSITION, e)]
+    if area == "AT":
+        s, e = pd.Timestamp(start), pd.Timestamp(end)
+        if e <= _DE_TRANSITION:
+            return [("DE_AT_LU", s, e)]
+        elif s >= _DE_TRANSITION:
+            return [("AT", s, e)]
+        else:
+            return [("DE_AT_LU", s, _DE_TRANSITION), ("AT", _DE_TRANSITION, e)]
     code = AREA_CODES.get(area)
     if code is None:
         raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
