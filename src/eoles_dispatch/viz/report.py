@@ -24,6 +24,7 @@ from .charts_outputs import (
     html_price_overview,
 )
 from .loaders import _load_metadata
+from .theme import _MONTH_LABELS
 
 # ── Main orchestrator ──
 
@@ -80,28 +81,14 @@ def generate_report(run_dir, open_browser=True, validate=False):
         else '<div class="no-data">No output data — run not solved yet.</div>'
     )
 
-    _MONTH_NAMES = {
-        1: "Jan",
-        2: "Feb",
-        3: "Mar",
-        4: "Apr",
-        5: "May",
-        6: "Jun",
-        7: "Jul",
-        8: "Aug",
-        9: "Sep",
-        10: "Oct",
-        11: "Nov",
-        12: "Dec",
-    }
     months_raw = meta.get("months")
     if months_raw:
         ms = str(months_raw)
         if "-" in ms:
             a, b = ms.split("-", 1)
-            months_label = f" · {_MONTH_NAMES.get(int(a), a)}–{_MONTH_NAMES.get(int(b), b)}"
+            months_label = f" · {_MONTH_LABELS.get(int(a), a)}–{_MONTH_LABELS.get(int(b), b)}"
         else:
-            months_label = f" · {_MONTH_NAMES.get(int(ms), ms)} only"
+            months_label = f" · {_MONTH_LABELS.get(int(ms), ms)} only"
     else:
         months_label = ""
     exec_time = meta.get("exec_time", "")

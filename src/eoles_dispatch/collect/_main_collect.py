@@ -229,13 +229,13 @@ def collect_history(
 
     # 4. Exogenous prices
     logger.info("=== Exogenous prices ===")
-    exo_prices = collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx)
+    exo_prices = collect_prices(client, exo_areas, start, end, gap_report, canon_idx)
     exo_prices.to_csv(output_dir / "exo_prices.csv", index=False)
     logger.info(f"  → exoPrices.csv ({len(exo_prices)} rows)")
 
     # 5. Actual prices for modeled areas (validation, not model input)
     logger.info("=== Actual prices (modeled areas) ===")
-    actual_prices = collect_actual_prices(client, areas, start, end, gap_report, canon_idx)
+    actual_prices = collect_prices(client, areas, start, end, gap_report, canon_idx)
     actual_prices.to_csv(output_dir / "actual_prices.csv", index=False)
     logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
 
@@ -275,15 +275,15 @@ def collect_demand(client, areas, start, end, gap_report, canon_idx):
             raw = entsoe.fetch_demand(client, area, start, end)
             if raw is not None and entsoe.is_usable(raw, start, end):
                 series = raw
-                logger.info("downloaded from ENTSO-E (OK)")
             elif area == "UK" and raw is not None:
-                print("partially downloaded demand from ENTSO-E, filling gaps with Elexon... ", end='', flush=True)
+                print(" partial ENTSO-E, filling gaps with Elexon...", end='', flush=True)
                 entsoe_partial = raw
         except Exception as e:
             if area == "UK":
-                print("no data at ENTSO-E, try Elexon... ", end='', flush=True)
+                print(" no data at ENTSO-E, try Elexon...", end='', flush=True)
             else:
-                logger.warning(f"Failed (KO)\nERROR:{e}")
+                print(f"FAILED ({type(e).__name__})")
+                logger.warning("Demand %s error: %s", area, e)
                 continue
 
         # Elexon fallback for UK: fill gaps in partial ENTSO-E data
@@ -295,20 +295,22 @@ def collect_demand(client, areas, start, end, gap_report, canon_idx):
                         series = entsoe_partial.combine_first(elexon_demand)
                     else:
                         series = elexon_demand
-                logger.info("completed from Elexon (OK)")    
             except Exception as e:
-                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
+                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
+                logger.warning("Demand %s Elexon fallback error: %s", area, e)
             # If Elexon also failed, use whatever ENTSO-E partial data we have
             if series is None and entsoe_partial is not None:
                 series = entsoe_partial
 
         if series is None:
-            logger.warning("no data available (KO)")
+            print("no data available (KO)")
             continue
 
+        print("OK")
         series = series.reindex(canon_idx)
         series = interpolate_gaps(series, report=gap_report, variable="demand", area=area)
         frames[area] = series / 1000  # MW → GW
+        
 
     df = pd.DataFrame(frames)
     df.index.name = "hour"
@@ -348,12 +350,12 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                 n_expected = expected_hours(start.year)
                 if len(production_df) > n_expected * ENTSOE_MIN_COVERAGE:
                     entsoe_usable = True
-                    logger.info("downloaded from ENTSO-E (OK)")
         except Exception as e:
             if area == "UK":
-                logger.info("no data at ENTSO-E, try Elexon... ")
+                print(" no data at ENTSO-E, try Elexon...", end='', flush=True)
             else:
-                logger.warning(f"Failed (KO)\nERROR:{e}")
+                print(f"FAILED ({type(e).__name__})")
+                logger.warning("Production %s error: %s", area, e)
                 continue
 
         # Elexon fallback for UK
@@ -369,11 +371,12 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                         production_df = merged.reset_index()
                     else:
                         production_df = elexon_df
-                    logger.info("completed from Elexon (OK)")   
             except Exception as e:
-                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
+                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
+                logger.warning("Production %s Elexon fallback error: %s", area, e)
 
         if production_df is not None and len(production_df) > 0:
+            print("OK")
             # Reindex onto canonical index, then gap-fill each production column
             indexed = production_df.set_index("hour")
             indexed = indexed.reindex(canon_idx)
@@ -383,6 +386,8 @@ def collect_production(client, areas, start, end, gap_report, canon_idx):
                 )
             indexed.index.name = "hour"
             result[area] = indexed.reset_index()
+        else:
+            print("no data available (KO)")
 
     return result
 
@@ -409,27 +414,26 @@ def collect_installed_capacity(client, areas, year, out_dir):
         # Try ENTSO-E
         try:
             capa = entsoe.fetch_installed_capacity(client, area, year)
-            if capa:
-                logger.info(f"from ENTSO-E ({len(capa)} production types) (OK)")
         except Exception as e:
             if area != "UK":
-                logger.warning(f"Failed (KO)\nERROR: {e}")
+                print(f"FAILED ({type(e).__name__})")
+                logger.warning("Installed capacity %s error: %s", area, e)
 
         # Elexon fallback for UK
         if not capa and area == "UK":
             try:
-                print("try Elexon... ", end='', flush=True)
+                print(" try Elexon...", end='', flush=True)
                 capa = elexon.fetch_installed_capacity(year)
-                if capa:
-                    logger.info(f"from Elexon ({len(capa)} production types) (OK)")
             except Exception as e:
-                logger.warning(f"Elexon fallback failed (KO)\nERROR: {e}")
+                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
+                logger.warning("Installed capacity %s Elexon fallback error: %s", area, e)
 
         if capa:
             for tec, mw in capa.items():
                 rows.append({"area": area, "tec": tec, "value": mw})
+            print(f"OK ({len(capa)} types)")
         else:
-            logger.warning("no data available (KO)")
+            print("no data available (KO)")
 
     long = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["area", "tec", "value"])
     df = long.pivot(index="tec", columns="area", values="value").fillna(0)
@@ -438,14 +442,10 @@ def collect_installed_capacity(client, areas, year, out_dir):
     logger.info(f"  → installed_capacity.csv ({len(df)} technologies, {len(df.columns)} areas)")
 
 
-# ── Exogenous prices ──
+# ── Prices ──
 
-# TODO: collect_exo_prices and collect_actual_prices are identical except for
-# the variable name passed to interpolate_gaps and the log label.
-# Factor into a single _collect_prices(client, areas, start, end, gap_report,
-# canon_idx, variable) and expose two thin wrappers.
-def collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx):
-    """Collect day-ahead prices for exogenous (non-modeled) areas, in EUR/MWh.
+def collect_prices(client, areas, start, end, gap_report, canon_idx):
+    """Collect day-ahead prices, in EUR/MWh.
 
     Uses entsoe.fetch_day_ahead_prices() which handles tz conversion and
     resampling. The orchestrator reindexes onto the canonical index and
@@ -453,46 +453,7 @@ def collect_exo_prices(client, exo_areas, start, end, gap_report, canon_idx):
 
     Args:
         client: EntsoePandasClient.
-        exo_areas: List of exogenous area codes.
-        start, end: Period bounds (naive UTC).
-        gap_report: Report instance for gap-filling audit trail.
-        canon_idx: DatetimeIndex from canonical_index(year).
-
-    Returns a DataFrame with columns ['hour', area1, area2, ...].
-    """
-    frames = {}
-    for area in exo_areas:
-        print(f"Exogenous prices {area}... ", end='', flush=True)
-        try:
-            prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
-            if prices is None:
-                logger.warning("no data available (KO)")
-                continue
-            prices = prices.reindex(canon_idx)
-            prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="exo_price", area=area)
-            frames[area] = prices
-            logger.info("downloaded (OK)")
-        except Exception as e:
-            logger.warning(f"Failed (KO)\nERROR: {e}")
-            continue
-
-    df = pd.DataFrame(frames)
-    df.index.name = "hour"
-    return df.reset_index()
-
-
-# ── Actual prices (modeled areas, for validation) ──
-
-def collect_actual_prices(client, areas, start, end, gap_report, canon_idx):
-    """Collect day-ahead prices for modeled areas, in EUR/MWh.
-
-    These prices are NOT used as model inputs — they serve as a reference
-    for comparing simulated prices against observed market outcomes.
-    Stored separately from exo_prices.csv to maintain a clean separation.
-
-    Args:
-        client: EntsoePandasClient.
-        areas: List of modeled area codes (e.g. FR, BE, DE, ...).
+        areas: List of area codes.
         start, end: Period bounds (naive UTC).
         gap_report: Report instance for gap-filling audit trail.
         canon_idx: DatetimeIndex from canonical_index(year).
@@ -501,18 +462,19 @@ def collect_actual_prices(client, areas, start, end, gap_report, canon_idx):
     """
     frames = {}
     for area in areas:
-        print(f"Actual prices {area}... ", end='', flush=True)
+        print(f"Prices {area}... ", end='', flush=True)
         try:
             prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
             if prices is None:
-                logger.warning("no data available (KO)")
+                print("no data available (KO)")
                 continue
+            print("OK")
             prices = prices.reindex(canon_idx)
-            prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="actual_price", area=area)
+            prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="price", area=area)
             frames[area] = prices
-            logger.info("downloaded (OK)")
         except Exception as e:
-            logger.warning(f"Failed (KO)\nERROR: {e}")
+            print(f"FAILED ({type(e).__name__})")
+            logger.warning("Prices %s error: %s", area, e)
             continue
 
     df = pd.DataFrame(frames)

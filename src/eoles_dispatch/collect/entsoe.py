@@ -55,6 +55,7 @@ Constants:
 """
 
 import logging
+import time
 
 import pandas as pd
 from entsoe import EntsoePandasClient
@@ -63,26 +64,6 @@ from ..config import AREA_CODES, AREA_CODES_PRICE, ENTSOE_API_KEY, ENTSOE_MIN_CO
 from ..utils import resample_to_hourly
 
 logger = logging.getLogger(__name__)
-
-
-def _to_api_timestamps(start, end):
-    """Convert naive UTC timestamps to tz-aware CET for entsoe-py.
-
-    entsoe-py requires tz-aware pandas Timestamps. Its @year_limited
-    decorator splits multi-year queries based on timestamp.year, so
-    timestamps must be expressed in CET (Europe/Brussels) to align
-    with CET year boundaries used by cet_year_bounds().
-
-    Our internal convention is naive UTC everywhere. This helper
-    bridges the two: naive UTC → aware UTC → CET.
-    """
-    start = pd.Timestamp(start)
-    end = pd.Timestamp(end)
-    if start.tzinfo is None:
-        start = start.tz_localize("UTC").tz_convert("Europe/Brussels")
-    if end.tzinfo is None:
-        end = end.tz_localize("UTC").tz_convert("Europe/Brussels")
-    return start, end
 
 
 # ── Preliminary ──
@@ -136,103 +117,6 @@ def set_client():
     return client
 
 
-def is_usable(series, start, end):
-    """Check whether an ENTSO-E series has sufficient coverage.
-
-    Returns True if the series is non-empty and covers at least
-    _ENTSOE_MIN_COVERAGE of the expected hourly range.
-    """
-    if series is None or (hasattr(series, "__len__") and len(series) == 0):
-        return False
-    if isinstance(series, pd.Series) and series.isna().all():
-        return False
-    expected_hours = (end - start).total_seconds() / 3600
-    if expected_hours <= 0:
-        return False
-    valid_count = series.notna().sum() if isinstance(series, pd.Series) else len(series)
-    return (valid_count / expected_hours) >= ENTSOE_MIN_COVERAGE
-
-
-# Human-readable column names returned by entsoe-py when querying with psr_type=None.
-# Maps our internal type names → set of possible ENTSO-E column name prefixes.
-ENTSOE_COL_NAMES = {
-    "biomass": {"Biomass"},
-    "lignite": {"Fossil Brown coal/Lignite"},
-    "coal_gas": {"Fossil Coal-derived gas"},
-    "gas": {"Fossil Gas"},
-    "hard_coal": {"Fossil Hard coal"},
-    "oil": {"Fossil Oil"},
-    "oil_shale": {"Fossil Oil shale"},
-    "peat": {"Fossil Peat"},
-    "geothermal": {"Geothermal"},
-    "phs": {"Hydro Pumped Storage"},
-    "river": {"Hydro Run-of-river and poundage"},
-    "lake": {"Hydro Water Reservoir"},
-    "marine": {"Marine"},
-    "nuclear": {"Nuclear"},
-    "other_renew": {"Other renewable"},
-    "solar": {"Solar"},
-    "waste": {"Waste"},
-    "offshore": {"Wind Offshore"},
-    "onshore": {"Wind Onshore"},
-    "other": {"Other"},
-}
-
-
-def col_matches(col, prodtype):
-    """Check if an ENTSO-E DataFrame column matches a given production type.
-
-    Args:
-        col: Column name — either a string or a tuple (name, aggregation_type).
-        prodtype: Our internal production type key (e.g. 'biomass', 'phs', 'lake').
-
-    Returns:
-        True if the column matches the production type.
-    """
-    col_name = col[0] if isinstance(col, tuple) else col
-    col_str = str(col_name)
-    # Check human-readable names
-    for name in ENTSOE_COL_NAMES.get(prodtype, set()):
-        if name in col_str:
-            return True
-    return False
-
-
-# Germany switched from DE_AT_LU to DE_LU bidding zone on 1 October 2018.
-# Naive UTC equivalent: 2018-09-30 22:00 (Oct 1 00:00 CET = UTC+2 in CEST).
-_DE_TRANSITION = pd.Timestamp("2018-09-30 22:00:00")
-
-
-def _resolve_area(area, start, end):
-    """Return [(entsoe_code, period_start, period_end), ...] for an area.
-
-    Handles the DE bidding zone transition (DE_AT_LU → DE_LU, Oct 2018).
-    For all other areas, returns a single period with the standard code.
-    """
-    if area == "DE":
-        s, e = pd.Timestamp(start), pd.Timestamp(end)
-        if e <= _DE_TRANSITION:
-            return [("DE_AT_LU", s, e)]
-        elif s >= _DE_TRANSITION:
-            return [("DE_LU", s, e)]
-        else:
-            return [("DE_AT_LU", s, _DE_TRANSITION), ("DE_LU", _DE_TRANSITION, e)]
-    code = AREA_CODES.get(area)
-    if code is None:
-        raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
-    return [(code, pd.Timestamp(start), pd.Timestamp(end))]
-
-
-def _resolve_area_price(area, start, end):
-    """Like _resolve_area but with price-specific overrides (IT → IT_NORD).
-
-    IT prices always use IT_NORD (time-independent).
-    DE prices follow the same zone transition as load/generation.
-    """
-    if area in AREA_CODES_PRICE:
-        code = AREA_CODES_PRICE[area]
-        return [(code, pd.Timestamp(start), pd.Timestamp(end))]
-    return _resolve_area(area, start, end)
 
 
 # ── Demand ──
@@ -258,7 +142,7 @@ def fetch_demand(client, area, start, end):
     parts = []
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
-        raw = client.query_load(code, start=api_start, end=api_end)
+        raw = _call_with_retry(client.query_load, code, start=api_start, end=api_end)
         if raw is not None and (not hasattr(raw, "__len__") or len(raw) > 0):
             if isinstance(raw, pd.DataFrame):
                 raw = raw.iloc[:, 0]
@@ -290,7 +174,7 @@ def fetch_day_ahead_prices(client, area, start, end):
     parts = []
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
-        prices = client.query_day_ahead_prices(code, start=api_start, end=api_end)
+        prices = _call_with_retry(client.query_day_ahead_prices, code, start=api_start, end=api_end)
         if prices is not None and (not hasattr(prices, "__len__") or len(prices) > 0):
             if isinstance(prices, pd.DataFrame):
                 prices = prices.iloc[:, 0]
@@ -330,7 +214,7 @@ def fetch_generation(client, area, start, end):
     raw_parts = []
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
-        part = client.query_generation(code, start=api_start, end=api_end, psr_type=None)
+        part = _call_with_retry(client.query_generation, code, start=api_start, end=api_end, psr_type=None)
         if isinstance(part, pd.DataFrame) and not part.empty:
             raw_parts.append(part)
     if not raw_parts:
@@ -400,7 +284,7 @@ def fetch_installed_capacity(client, area, year):
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
         try:
-            raw = client.query_installed_generation_capacity(code, start=api_start, end=api_end)
+            raw = _call_with_retry(client.query_installed_generation_capacity, code, start=api_start, end=api_end)
         except Exception as e:
             logger.warning("Installed capacity unavailable for %s: %s", area, e)
             return None
@@ -418,3 +302,176 @@ def fetch_installed_capacity(client, area, year):
             if val > 0:
                 result[prodtype] = val
     return result if result else None
+
+
+# ── Constants and Helpers ──
+
+
+def is_usable(series, start, end):
+    """Check whether an ENTSO-E series has sufficient coverage.
+
+    Returns True if the series is non-empty and covers at least
+    _ENTSOE_MIN_COVERAGE of the expected hourly range.
+    """
+    if series is None or (hasattr(series, "__len__") and len(series) == 0):
+        return False
+    if isinstance(series, pd.Series) and series.isna().all():
+        return False
+    expected_hours = (end - start).total_seconds() / 3600
+    if expected_hours <= 0:
+        return False
+    valid_count = series.notna().sum() if isinstance(series, pd.Series) else len(series)
+    return (valid_count / expected_hours) >= ENTSOE_MIN_COVERAGE
+
+
+# ── Retry on transient failure
+
+_MAX_ATTEMPTS = 5
+_RETRY_DELAYS = [10, 30, 60, 120, 300]  # seconds after each failed attempt
+
+def _call_with_retry(fn, *args, **kwargs):
+    """Call an ENTSO-E API function, retrying on transient errors.
+
+    Prints inline attempt updates so the caller's status line stays on one line.
+    Only retries on transient errors (5xx, connection/timeout). Other exceptions
+    are re-raised immediately.
+    """
+    last_exc = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            delay = _RETRY_DELAYS[attempt - 2]
+            print(
+                f"{_error_label(last_exc)} -> Attempt {attempt}/{_MAX_ATTEMPTS}... ",
+                end="",
+                flush=True,
+            )
+            time.sleep(delay)
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if _is_transient(e):
+                last_exc = e
+                logger.debug("Transient error on attempt %d: %s", attempt, e)
+            else:
+                raise
+    raise last_exc
+
+def _error_label(e):
+    """Short label for display, e.g. 'Error 503' or 'ConnectionError'."""
+    if hasattr(e, "response") and e.response is not None:
+        return f"Error {e.response.status_code}"
+    return type(e).__name__
+
+def _is_transient(e):
+    """Return True for errors worth retrying (server-side or network)."""
+    if hasattr(e, "response") and e.response is not None:
+        return e.response.status_code in (429, 500, 502, 503, 504)
+    err_str = str(e).lower()
+    return any(k in err_str for k in ("503", "service unavailable", "connection", "timeout"))
+
+
+# ── ENTSO-E API conventions and conversion
+
+def _to_api_timestamps(start, end):
+    """Convert naive UTC timestamps to tz-aware CET for entsoe-py.
+
+    entsoe-py requires tz-aware pandas Timestamps. Its @year_limited
+    decorator splits multi-year queries based on timestamp.year, so
+    timestamps must be expressed in CET (Europe/Brussels) to align
+    with CET year boundaries used by cet_year_bounds().
+
+    Our internal convention is naive UTC everywhere. This helper
+    bridges the two: naive UTC → aware UTC → CET.
+    """
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
+    if start.tzinfo is None:
+        start = start.tz_localize("UTC").tz_convert("Europe/Brussels")
+    if end.tzinfo is None:
+        end = end.tz_localize("UTC").tz_convert("Europe/Brussels")
+    return start, end
+
+
+# Human-readable column names returned by entsoe-py when querying with psr_type=None.
+# Maps our internal type names → set of possible ENTSO-E column name prefixes.
+ENTSOE_COL_NAMES = {
+    "biomass": {"Biomass"},
+    "lignite": {"Fossil Brown coal/Lignite"},
+    "coal_gas": {"Fossil Coal-derived gas"},
+    "gas": {"Fossil Gas"},
+    "hard_coal": {"Fossil Hard coal"},
+    "oil": {"Fossil Oil"},
+    "oil_shale": {"Fossil Oil shale"},
+    "peat": {"Fossil Peat"},
+    "geothermal": {"Geothermal"},
+    "phs": {"Hydro Pumped Storage"},
+    "river": {"Hydro Run-of-river and poundage"},
+    "lake": {"Hydro Water Reservoir"},
+    "marine": {"Marine"},
+    "nuclear": {"Nuclear"},
+    "other_renew": {"Other renewable"},
+    "solar": {"Solar"},
+    "waste": {"Waste"},
+    "offshore": {"Wind Offshore"},
+    "onshore": {"Wind Onshore"},
+    "other": {"Other"},
+}
+
+
+def col_matches(col, prodtype):
+    """Check if an ENTSO-E DataFrame column matches a given production type.
+
+    Args:
+        col: Column name — either a string or a tuple (name, aggregation_type).
+        prodtype: Our internal production type key (e.g. 'biomass', 'phs', 'lake').
+
+    Returns:
+        True if the column matches the production type.
+    """
+    col_name = col[0] if isinstance(col, tuple) else col
+    col_str = str(col_name)
+    # Check human-readable names
+    for name in ENTSOE_COL_NAMES.get(prodtype, set()):
+        if name in col_str:
+            return True
+    return False
+
+
+
+# ── Coping with moving areas
+
+# Germany switched from DE_AT_LU to DE_LU bidding zone on 1 October 2018.
+# Naive UTC equivalent: 2018-09-30 22:00 (Oct 1 00:00 CET = UTC+2 in CEST).
+_DE_TRANSITION = pd.Timestamp("2018-09-30 22:00:00")
+
+def _resolve_area(area, start, end):
+    """Return [(entsoe_code, period_start, period_end), ...] for an area.
+
+    Handles the DE bidding zone transition (DE_AT_LU → DE_LU, Oct 2018).
+    For all other areas, returns a single period with the standard code.
+    """
+    if area == "DE":
+        s, e = pd.Timestamp(start), pd.Timestamp(end)
+        if e <= _DE_TRANSITION:
+            return [("DE_AT_LU", s, e)]
+        elif s >= _DE_TRANSITION:
+            return [("DE_LU", s, e)]
+        else:
+            return [("DE_AT_LU", s, _DE_TRANSITION), ("DE_LU", _DE_TRANSITION, e)]
+    code = AREA_CODES.get(area)
+    if code is None:
+        raise ValueError(f"Unknown area code: {area}. Known: {list(AREA_CODES.keys())}")
+    return [(code, pd.Timestamp(start), pd.Timestamp(end))]
+
+
+def _resolve_area_price(area, start, end):
+    """Like _resolve_area but with price-specific overrides (IT → IT_NORD).
+
+    IT prices always use IT_NORD (time-independent).
+    DE prices follow the same zone transition as load/generation.
+    """
+    if area in AREA_CODES_PRICE:
+        code = AREA_CODES_PRICE[area]
+        return [(code, pd.Timestamp(start), pd.Timestamp(end))]
+    return _resolve_area(area, start, end)
+

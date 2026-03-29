@@ -19,6 +19,7 @@ from .loaders import (
     _load_actual_production,
 )
 from .theme import (
+    _MONTH_LABELS,
     AGG_COLORS,
     AGG_NEGATIVE,
     AGG_ORDER,
@@ -973,24 +974,6 @@ def chart_production(run_dir, areas):
 
 
 # ── Energy mix helpers ──
-
-# TODO: _MONTH_LABELS is identical to _MONTH_NAMES defined in report.py.
-# Move to a shared constant in viz/__init__.py or a viz/utils.py module.
-_MONTH_LABELS = {
-    1: "Jan",
-    2: "Feb",
-    3: "Mar",
-    4: "Apr",
-    5: "May",
-    6: "Jun",
-    7: "Jul",
-    8: "Aug",
-    9: "Sep",
-    10: "Oct",
-    11: "Nov",
-    12: "Dec",
-}
-
 
 def _build_energy_agg(df, areas):
     """Return (area_list, agg_data) for energy mix charts.
