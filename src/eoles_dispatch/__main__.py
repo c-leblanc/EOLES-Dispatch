@@ -80,6 +80,11 @@ def main():
         choices=["prices", "production", "capa_on", "FRtrade"],
         help="Reports to generate (default: prices production)",
     )
+    solve_parser.add_argument(
+        "--fulldiag",
+        action="store_true",
+        help="Export exhaustive diagnostics (all variables and duals) to diagnostics/",
+    )
     _add_project_dir(solve_parser)
 
     # --- list command ---
@@ -176,6 +181,7 @@ def main():
             solver=args.solver,
             version=args.model_version,
             reports=args.reports,
+            full_diag=args.fulldiag,
         )
 
     elif args.command == "list":

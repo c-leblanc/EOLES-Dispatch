@@ -162,6 +162,7 @@ def solve_run(
     solver="highs",
     version="standard",
     reports=None,
+    full_diag=False,
 ):
     """Solve an existing run.
 
@@ -171,6 +172,8 @@ def solve_run(
         solver: Solver name (e.g. "highs", "cbc", "gurobi").
         version: Model version ("standard" or "static_thermal").
         reports: List of reports to generate.
+        full_diag: If True, export exhaustive diagnostics (all variables and
+            duals) to runs/<name>/diagnostics/.
 
     Returns:
         Solver results object.
@@ -258,6 +261,11 @@ def solve_run(
     for report_name in reports:
         if report_name in report_map:
             report_map[report_name](model, run_dir)
+
+    if full_diag:
+        from .export_diagnostics import export_all_diagnostics
+
+        export_all_diagnostics(model, run_dir)
 
     elapsed_seconds = int(time.monotonic() - start_monotonic)
     hours, remainder = divmod(elapsed_seconds, 3600)
