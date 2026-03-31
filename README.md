@@ -168,10 +168,8 @@ EOLES-Dispatch/
 │   └── scenario_editor.html        # Browser-based scenario editor
 ├── .env.example                    # Template for environment variables (API keys)
 ├── data/                           # Historical data (gitignored, regenerable)
-│   ├── time_varying_inputs/        # Demand, prices, hydro, nuclear (ENTSO-E / Elexon)
-│   ├── renewable_ninja/            # Wind & solar capacity factors (Ninja)
-│   ├── gap_fill_report.csv/.txt    # Log of gap-filled missing values
-│   └── DATA_COLLECTION.md          # Detailed data pipeline documentation
+│   ├── <year>/                     # Per-year ENTSO-E/Elexon data (demand, production, prices, installed capacity)
+│   └── renewable_ninja/            # Wind & solar capacity factors (Ninja)
 └── runs/                           # Run directories (gitignored)
     └── <run_name>/
         ├── run.yaml                # Metadata (scenario, year, status, timestamps)
@@ -233,7 +231,7 @@ cp .env.example .env
 # (register for free at https://transparency.entsoe.eu/)
 ```
 
-The key is validated at startup with a quick test query — you'll get a clear error immediately if it's missing or invalid. See [`data/DATA_COLLECTION.md`](data/DATA_COLLECTION.md) for full details on the data pipeline.
+The key is validated at startup with a quick test query — you'll get a clear error immediately if it's missing or invalid. See [`docs/DATA_COLLECTION.md`](docs/DATA_COLLECTION.md) for full details on the data pipeline.
 
 ### Country zone mapping
 

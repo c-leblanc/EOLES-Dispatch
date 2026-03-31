@@ -3,8 +3,8 @@
 This document describes the full pipeline for collecting, cleaning, and
 formatting the input data required by the EOLES-Dispatch model. The
 corresponding source code lives in
-[`src/eoles_dispatch/datacoll/`](../src/eoles_dispatch/datacoll/) (main orchestrator in
-[`main_collect.py`](../src/eoles_dispatch/datacoll/main_collect.py)).
+[`src/eoles_dispatch/collect/`](../src/eoles_dispatch/collect/) (main orchestrator in
+[`_main_collect.py`](../src/eoles_dispatch/collect/_main_collect.py)).
 
 ---
 
@@ -84,33 +84,37 @@ Access to ENTSO-E uses the `entsoe-py` library and requires an API key
 
 Demand represents the actual system load as published by TSOs through ENTSO-E.
 
-### 3.2 Non-market-dependent generation — NMD (`nmd.csv`)
+### 3.2 Non-market-dependent generation — NMD
 
 | | |
 |---|---|
-| **Source** | `query_generation`, aggregating PSR types: B01 (biomass), B09 (geothermal), B13 (marine), B15 (other renewable), B17 (waste), B20 (other) |
+| **Source** | Derived at run creation time from `production_<area>.csv`, aggregating: biomass, geothermal, marine, other_renew, waste, other |
 | **Resolution** | Hourly |
-| **Unit** | GW (converted from MW, ÷1000) |
-| **Processing** | Hourly resampling → gap-filling |
-| **Fallback** | If the aggregate query fails, each PSR type is queried individually and summed |
+| **Unit** | GW |
+| **Computed by** | `run/compute.py:compute_nmd()` |
 
-NMD represents non-dispatchable must-run generation. It is subtracted from gross
-demand to obtain the residual demand that the model must satisfy.
+NMD represents non-dispatchable must-run generation. It is not collected
+separately — it is computed from the per-type production data at run creation
+time. It is subtracted from gross demand to obtain the residual demand that the
+model must satisfy.
 
-### 3.3 VRE capacity factors (`offshore.csv`, `onshore.csv`, `solar.csv`, `river.csv`)
+### 3.3 VRE capacity factors
 
 | | |
 |---|---|
-| **Source** | `query_generation` (production) + `query_installed_generation_capacity` |
-| **PSR types** | B18 (wind offshore), B19 (wind onshore), B16 (solar PV), B11 (run-of-river hydro) |
+| **Source** | Derived at run creation time from `production_<area>.csv` + `installed_capacity_<area>.csv` |
+| **Technologies** | offshore, onshore, solar, river |
 | **Calculation** | CF = production / installed capacity, clipped to [0, 1] |
 | **Resolution** | Hourly |
 | **Unit** | Dimensionless (capacity factor, 0 to 1) |
+| **Computed by** | `run/compute.py:compute_vre_capacity_factors()` |
 | **Fallback** | If installed capacity is unavailable, the observed production maximum is used as proxy |
 
 These capacity factors reflect the actual historical performance of installed
-fleets. They differ from Renewables.ninja profiles, which are weather-based and
-use technology assumptions independent of the existing fleet.
+fleets. They are used when `--actual-cf` is passed at run creation. By default,
+Renewables.ninja profiles are used instead (weather-based, technology assumptions
+independent of the existing fleet). River capacity factors always use historical
+data regardless of the `--actual-cf` flag.
 
 ### 3.4 Exogenous prices (`exoPrices.csv`)
 
@@ -127,40 +131,42 @@ non-modeled areas. The linear interpolation threshold is set higher (24h instead
 of 3h) because prices exhibit more frequent gaps and less structured
 intra-day variability.
 
-### 3.5 Lake inflows (`lake_inflows.csv`)
+### 3.5 Lake inflows
 
 | | |
 |---|---|
-| **Source** | `query_generation` (PSR types B12 lake + B10 PHS) |
-| **Calculation** | inflows = lake_production + PHS_production − η × PHS_consumption, with η = 0.9 × 0.95 = 0.855 |
+| **Source** | Derived at run creation time from `production_<area>.csv` (lake + PHS columns) |
+| **Calculation** | inflows = lake_production + PHS_production + η × PHS_consumption, with η = 0.9 × 0.95 = 0.855 (PHS_consumption is negative) |
 | **Resolution** | Monthly (sum of hourly values) |
-| **Unit** | TWh (converted from MWh, ÷10⁶) |
-| **Processing** | Hourly gap-filling → monthly aggregation → clip ≥ 0 |
+| **Unit** | TWh (converted from GWh, ÷10³) |
+| **Computed by** | `run/compute.py:compute_lake_inflows()` |
 
 Inflows are estimated from observed net hydro production. This is not a direct
 measurement of natural inflows but a reasonable approximation of the hydraulic
 energy available each month.
 
-### 3.6 Hydro power limits (`hMaxIn.csv`, `hMaxOut.csv`)
+### 3.6 Hydro power limits
 
 | | |
 |---|---|
-| **Source** | `query_generation` (PSR types B10 PHS + B12 lake) |
+| **Source** | Derived at run creation time from `production_<area>.csv` (lake + PHS columns) |
 | **Calculation** | Monthly maximum of hourly power output |
 | **Resolution** | Monthly |
-| **Unit** | GW (converted from MW, ÷1000) |
+| **Unit** | GW |
+| **Computed by** | `run/compute.py:compute_hydro_limits()` |
 
 - `hMaxOut` = monthly max of (lake production + PHS production)
 - `hMaxIn` = monthly max of PHS consumption
 
-### 3.7 Nuclear availability (`nucMaxAF.csv`)
+### 3.7 Nuclear availability
 
 | | |
 |---|---|
-| **Source** | `query_generation` (PSR type B14 nuclear) + `query_installed_generation_capacity` |
+| **Source** | Derived at run creation time from `production_<area>.csv` + `installed_capacity_<area>.csv` |
 | **Calculation** | Availability factor = production / installed capacity, weekly max, clipped to [0, 1] |
 | **Resolution** | Weekly |
 | **Unit** | Dimensionless (0 to 1) |
+| **Computed by** | `run/compute.py:compute_nuclear_max_af()` |
 
 The weekly maximum (rather than the mean) reflects the peak achievable output
 during each week, capturing the nuclear fleet's maintenance schedule.
@@ -179,7 +185,7 @@ electricity market.
 | **Base URL** | `https://data.elexon.co.uk/bmrs/api/v1` |
 | **Authentication** | None required (free, public, no registration) |
 | **Resolution** | Half-hourly (resampled to hourly to match ENTSO-E) |
-| **Source code** | [`src/eoles_dispatch/datacoll/elexon.py`](../src/eoles_dispatch/datacoll/elexon.py) |
+| **Source code** | [`src/eoles_dispatch/collect/elexon.py`](../src/eoles_dispatch/collect/elexon.py) |
 
 **Endpoint mapping:**
 
@@ -363,10 +369,10 @@ Each row corresponds to one filled gap:
 
 ## 7. Unit conversions
 
-| Raw ENTSO-E data | Stored unit |
-|---|---|
-| Power in MW | **GW** (÷ 1,000) |
-| Energy in MWh | **TWh** (÷ 1,000,000) |
+| Raw ENTSO-E data | Stored unit | Conversion |
+|---|---|---|
+| Power in MW | **GW** | ÷ 1,000 (at fetch time in entsoe.py / elexon.py) |
+| Energy in GWh (hourly power × 1h) | **TWh** | ÷ 1,000 (at compute time in compute.py) |
 | Capacity factors | Dimensionless, clipped to [0, 1] |
 | Prices | EUR/MWh (unchanged) |
 
@@ -374,42 +380,48 @@ Each row corresponds to one filled gap:
 
 ## 8. Output file structure
 
+The collection pipeline stores **intermediate** data organized by year. Derived
+variables (NMD, capacity factors, nuclear availability, lake inflows, hydro
+limits) are computed later at run creation time by `format_inputs.py` and
+`compute.py`.
+
 ```
 data/
-├── time_varying_inputs/
-│   ├── demand.csv              Hourly demand by area (GW)
-│   ├── nmd.csv                 Hourly NMD generation by area (GW)
-│   ├── offshore.csv            Hourly offshore wind CF by area
-│   ├── onshore.csv             Hourly onshore wind CF by area
-│   ├── solar.csv                  Hourly solar PV CF by area
-│   ├── river.csv               Hourly run-of-river CF by area
-│   ├── exoPrices.csv           Hourly day-ahead prices, exogenous areas (EUR/MWh)
-│   ├── lake_inflows.csv        Monthly lake inflows by area (TWh)
-│   ├── hMaxIn.csv              Monthly max hydro charging power (GW)
-│   ├── hMaxOut.csv             Monthly max hydro discharging power (GW)
-│   └── nucMaxAF.csv            Weekly nuclear availability factor (0–1)
+├── <year>/                             One directory per collected year
+│   ├── production_<area>.csv           Hourly generation by type (GW)
+│   ├── demand_<area>.csv               Hourly demand (GW)
+│   ├── prices_<area>.csv               Hourly day-ahead prices (EUR/MWh)
+│   ├── installed_capacity_<area>.csv   Installed capacity: ['tec', 'value'] (GW)
+│   ├── _gap_fill_report.csv            Detailed gap-filling log
+│   └── _gap_fill_report.txt            Human-readable gap-filling summary
 │
-├── renewable_ninja/
-│   ├── solar.csv                  Solar PV CF (Ninja)
-│   ├── onshore_current.csv     Onshore wind CF, current fleet
-│   ├── onshore_future.csv      Onshore wind CF, future fleet
-│   ├── offshore_current.csv    Offshore wind CF, current fleet
-│   └── offshore_future.csv     Offshore wind CF, future fleet
-│
-├── gap_fill_report.csv         Detailed gap-filling log
-├── gap_fill_report.txt         Human-readable gap-filling summary
-└── DATA_COLLECTION.md          This document
+└── renewable_ninja/
+    ├── solar.csv                       Solar PV CF (Ninja)
+    ├── onshore_current.csv             Onshore wind CF, current fleet
+    ├── onshore_future.csv              Onshore wind CF, future fleet
+    ├── offshore_current.csv            Offshore wind CF, current fleet
+    └── offshore_future.csv             Offshore wind CF, future fleet
 ```
 
-**Hourly file format**:
+**Per-area hourly file format** (e.g. `demand_FR.csv`):
 ```csv
-hour,FR,BE,DE,CH,IT,ES,UK
-2020-01-01 00:00:00,62.3,10.1,55.8,...
+hour,demand
+2020-01-01 00:00:00,62.3
+2020-01-01 01:00:00,60.1
 ```
 
-**Monthly format**: `month,FR,BE,DE,...` with `month` as `YYYYMM`.
+**Production file format** (e.g. `production_FR.csv`):
+```csv
+hour,nuclear,gas,coal,...,phs,phs_in
+2020-01-01 00:00:00,42.1,5.3,1.2,...,0.8,-0.5
+```
 
-**Weekly format**: `week,FR,BE,DE,...` with `week` as `YYYYWW`.
+**Installed capacity format** (e.g. `installed_capacity_FR.csv`):
+```csv
+tec,value
+nuclear,61.4
+gas,12.1
+```
 
 ---
 

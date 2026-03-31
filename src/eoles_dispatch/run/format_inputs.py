@@ -45,37 +45,37 @@ def load_tv_inputs(
         hour_week, lake_inflows, hMaxIn, hMaxOut, nucMaxAF, hours, weeks, months.
     """
     data_dir = Path(data_dir)
-    valid_hours = set(hour_month["hour"].unique())
+    valid_hours = set(hour_month["hour"])
 
     # 1. Load raw data and filter to the simulation period
-    production_raw = load_year_production(data_dir, simul_year, areas)
+    production_raw = load_year_timeseries(label="production", data_dir=data_dir, year=simul_year, areas=areas)
     production = {area: _filter_to_posix(df, valid_hours) for area, df in production_raw.items()}
 
-    demand_raw = _load_year_csv(data_dir, simul_year, "demand.csv", areas)
-    demand_filtered = _filter_to_posix(demand_raw, valid_hours)
-    area_cols_demand = [c for c in areas if c in demand_filtered.columns]
-    demand_filtered[area_cols_demand] = demand_filtered[area_cols_demand] / 1000  # MW → GW
-    demand = pd.melt(
-        demand_filtered,
-        id_vars=["hour"],
-        value_vars=area_cols_demand,
-        var_name="area",
-        value_name="value",
-    )[["area", "hour", "value"]]
+    demand_raw = load_year_timeseries(label="demand",data_dir=data_dir, year=simul_year, areas=areas)
+    demand = {area: _filter_to_posix(df, valid_hours) for area, df in demand_raw.items()}
+    demand = pd.concat(
+        [df.assign(area=area) for area, df in demand.items()],
+        ignore_index=True
+    )
+    demand = demand[["area", "hour", "demand"]]
 
-    exo_prices_raw = _load_year_csv(data_dir, simul_year, "exo_prices.csv", exo_areas)
-    exo_filtered = _filter_to_posix(exo_prices_raw, valid_hours)
-    exo_cols = [c for c in exo_areas if c in exo_filtered.columns]
-    exoPrices = pd.melt(
-        exo_filtered, id_vars=["hour"], value_vars=exo_cols, var_name="area", value_name="value"
-    )[["area", "hour", "value"]]
+    exo_prices_raw = load_year_timeseries(label="prices",data_dir=data_dir,year=simul_year,areas=exo_areas)
+    exo_prices = {area: _filter_to_posix(df, valid_hours) for area, df in exo_prices_raw.items()}
+    exo_prices = pd.concat(
+        [df.assign(area=area) for area, df in exo_prices.items()],
+        ignore_index=True
+    )
+    exo_prices = exo_prices[["area", "hour", "prices"]]
 
-    # Load installed capacity (wide format: tec index, area columns, MW)
-    icapa_path = data_dir / str(simul_year) / "installed_capacity.csv"
-    if icapa_path.exists():
-        installed_capa = pd.read_csv(icapa_path, index_col="tec")
-    else:
-        installed_capa = None
+
+    # Load installed capacity (1 file per area, tec index, GW)
+    installed_capa = {}
+    for area in areas:
+        icapa_path = data_dir / str(simul_year) / f"installed_capacity_{area}.csv"
+        if icapa_path.exists():
+            installed_capa[area] = pd.read_csv(icapa_path, index_col="tec")
+        else:
+            installed_capa[area] = None
 
     # 2. NMD
     nmd = compute_nmd(production, areas)
@@ -134,7 +134,7 @@ def load_tv_inputs(
     return {
         "demand": demand,
         "nmd": nmd,
-        "exoPrices": exoPrices,
+        "exoPrices": exo_prices,
         "vre_profiles": vre_profiles,
         "hour_month": hour_month,
         "hour_week": hour_week,
@@ -178,8 +178,8 @@ def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
 # ── Data loaders and helpers ──
 
 
-def load_year_production(data_dir, year, areas):
-    """Load raw production data for all areas from data/<year>/production_<area>.csv.
+def load_year_timeseries(label, data_dir, year, areas):
+    """Load <label> data for all areas from <data_dir>/<year>/<label>_<area>.csv.
 
     Args:
         data_dir: Path to the data/ directory.
@@ -187,8 +187,7 @@ def load_year_production(data_dir, year, areas):
         areas: List of area codes.
 
     Returns:
-        dict {area: pd.DataFrame} with columns ['hour', prodtype1, prodtype2, ...].
-        Values in MW. 'hour' is a UTC tz-naive datetime.
+        dict {area: pd.DataFrame}. 'hour' is a UTC tz-naive datetime.
     """
     year_dir = Path(data_dir) / str(year)
     if not year_dir.exists():
@@ -199,42 +198,18 @@ def load_year_production(data_dir, year, areas):
 
     result = {}
     for area in areas:
-        prod_path = year_dir / f"production_{area}.csv"
-        if not prod_path.exists():
+        file_path = year_dir / f"{label}_{area}.csv"
+        if not file_path.exists():
             raise FileNotFoundError(
-                f"Production data for {area} not found at {prod_path}. "
+                f"{label} data for {area} not found at {file_path}. "
                 f"Re-run 'eoles-dispatch collect --start {year} --end {year + 1}'."
             )
-        df = pd.read_csv(prod_path)
+        df = pd.read_csv(file_path)
         df["hour"] = pd.to_datetime(df["hour"])
         result[area] = df
 
     return result
 
-
-def _load_year_csv(data_dir, year, filename, areas_or_exo):
-    """Load a year-based CSV file (demand.csv or exo_prices.csv).
-
-    Args:
-        data_dir: Path to the data/ directory.
-        year: The simulation year.
-        filename: CSV filename (e.g. "demand.csv").
-        areas_or_exo: List of area columns to extract.
-
-    Returns:
-        pd.DataFrame with columns ['hour', area1, area2, ...].
-        'hour' is a UTC tz-naive datetime.
-    """
-    year_dir = Path(data_dir) / str(year)
-    csv_path = year_dir / filename
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"{filename} not found at {csv_path}. "
-            f"Run 'eoles-dispatch collect --start {year} --end {year + 1}' first."
-        )
-    df = pd.read_csv(csv_path)
-    df["hour"] = pd.to_datetime(df["hour"])
-    return df
 
 
 def load_ninja_var(data_dir, variable, areas, valid_hours):

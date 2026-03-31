@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from eoles_dispatch.collect._main_collect import _is_production_usable
 from eoles_dispatch.collect.entsoe import ENTSOE_COL_NAMES, PRODUCTION_TYPES, col_matches, is_usable
 from eoles_dispatch.collect.gap_filling import Report, interpolate_gaps
 from eoles_dispatch.utils import (
@@ -166,36 +167,41 @@ def test_reindex_clips_extra_and_exposes_gaps():
 # ── is_usable ──
 
 
-def _usability_range():
-    """Return a (start, end) pair spanning 24 hours."""
-    start = pd.Timestamp("2023-01-01")
-    end = pd.Timestamp("2023-01-02")
-    return start, end
-
-
 def test_is_usable_good_coverage():
-    start, end = _usability_range()
-    idx = pd.date_range(start, periods=22, freq="h")
+    idx = pd.date_range("2023-01-01", periods=22, freq="h")
     s = pd.Series(np.ones(22), index=idx)
-    assert is_usable(s, start, end)
+    assert is_usable(s, 24)  # 22/24 = 91% > 50%
 
 
 def test_is_usable_sparse():
-    start, end = _usability_range()
-    idx = pd.date_range(start, periods=7, freq="h")
+    idx = pd.date_range("2023-01-01", periods=7, freq="h")
     s = pd.Series(np.ones(7), index=idx)
-    assert not is_usable(s, start, end)
+    assert not is_usable(s, 24)  # 7/24 = 29% < 50%
 
 
 def test_is_usable_none():
-    start, end = _usability_range()
-    assert is_usable(None, start, end) is False
+    assert is_usable(None, 24) is False
 
 
 def test_is_usable_empty_series():
-    start, end = _usability_range()
     s = pd.Series(dtype=float)
-    assert is_usable(s, start, end) is False
+    assert is_usable(s, 24) is False
+
+
+def test_is_usable_all_nan():
+    idx = pd.date_range("2023-01-01", periods=24, freq="h")
+    s = pd.Series([np.nan] * 24, index=idx)
+    assert is_usable(s, 24) is False
+
+
+def test_is_usable_dataframe():
+    df = pd.DataFrame({"a": np.ones(20), "b": np.ones(20)})
+    assert is_usable(df, 24)  # len=20 > 24*0.5=12
+
+
+def test_is_usable_zero_expected():
+    s = pd.Series([1.0, 2.0])
+    assert is_usable(s, 0) is False
 
 
 # ── interpolate_gaps ──
@@ -212,30 +218,76 @@ def _make_gapped_series(gap_start, gap_length, total=48):
 def test_interpolate_small_gap_linear():
     s = _make_gapped_series(gap_start=10, gap_length=2, total=48)
     report = Report()
-    result = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     assert result.iloc[10] == pytest.approx(11.0, abs=0.5)
     assert result.iloc[11] == pytest.approx(12.0, abs=0.5)
+    assert filled == 2
 
 
 def test_interpolate_no_gaps_passthrough():
     idx = pd.date_range("2023-06-01", periods=24, freq="h")
     s = pd.Series(np.ones(24), index=idx)
     report = Report()
-    result = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     pd.testing.assert_series_equal(result, s)
+    assert filled == 0
 
 
 def test_interpolate_preserves_index():
     s = _make_gapped_series(gap_start=5, gap_length=2, total=48)
     report = Report()
-    result = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, _ = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     pd.testing.assert_index_equal(result.index, s.index)
 
 
 def test_interpolate_fills_all_nans():
     s = _make_gapped_series(gap_start=20, gap_length=2, total=48)
     report = Report()
-    result = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     assert result.isna().sum() == 0
+    assert filled > 0
 
 
+# ── _is_production_usable ──
+
+
+def test_production_usable_enough_data():
+    """DataFrame with 90% valid rows should be usable (> 50% coverage)."""
+    n = 100
+    df = pd.DataFrame({"hour": range(n), "gas": np.ones(n), "solar": np.ones(n)})
+    assert _is_production_usable(df, n)
+
+
+def test_production_usable_mostly_nan():
+    """DataFrame with 90% NaN rows should not be usable."""
+    n = 100
+    values = np.full(n, np.nan)
+    values[:5] = 1.0  # only 5% valid
+    df = pd.DataFrame({"hour": range(n), "gas": values, "solar": values})
+    assert not _is_production_usable(df, n)
+
+
+def test_production_usable_none():
+    assert not _is_production_usable(None, 100)
+
+
+# ── Report.load ──
+
+
+def test_report_load_existing(tmp_path):
+    """Report.load should restore entries from a previously saved CSV."""
+    report = Report()
+    report.add("demand", "FR", pd.Timestamp("2023-01-01"), 3, "linear_interpolation")
+    report.add("production", "DE", pd.Timestamp("2023-06-15"), 12, "weekly_analogue_next")
+    report.save(tmp_path)
+
+    loaded = Report.load(tmp_path / "_gap_fill_report.csv")
+    assert len(loaded.entries) == 2
+    assert loaded.entries[0]["variable"] == "demand"
+    assert loaded.entries[1]["area"] == "DE"
+
+
+def test_report_load_nonexistent(tmp_path):
+    """Report.load on a missing file should return an empty report."""
+    loaded = Report.load(tmp_path / "does_not_exist.csv")
+    assert len(loaded.entries) == 0

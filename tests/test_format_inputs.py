@@ -92,7 +92,7 @@ def _make_production(areas, n_hours=24, prodtypes=None):
     for area in areas:
         data = {"hour": hours_posix.values}
         for production_type in prodtypes:
-            data[production_type] = rng.uniform(0, 1000, n_hours)
+            data[production_type] = rng.uniform(0, 1, n_hours)
         # phs_in is negative at all levels (consumption)
         if "phs_in" in data:
             data["phs_in"] = -np.abs(data["phs_in"])
@@ -109,7 +109,7 @@ class TestComputeNmd:
         # Compute expected NMD manually
         df = production["FR"]
         nmd_prodtypes = ["biomass", "geothermal", "marine", "other_renew", "waste", "other"]
-        expected = df[nmd_prodtypes].sum(axis=1).values / 1000  # MW → GW
+        expected = df[nmd_prodtypes].sum(axis=1).values
 
         fr_nmd = nmd[nmd["area"] == "FR"].sort_values("hour")
         np.testing.assert_array_almost_equal(fr_nmd["value"].values, expected, decimal=6)
@@ -130,7 +130,7 @@ class TestComputeVreCapacityFactors:
         """Capacity factors must be in [0, 1]."""
         production = _make_production(["FR"], n_hours=24)
         capa = pd.DataFrame(
-            {"FR": [1000.0, 1000.0, 1000.0]},  # MW
+            {"FR": [1.0, 1.0, 1.0]},
             index=pd.Index(["offshore", "onshore", "solar"], name="tec"),
         )
         cf = compute_vre_capacity_factors(production, capa, ["FR"])
@@ -140,7 +140,7 @@ class TestComputeVreCapacityFactors:
     def test_cf_output_columns(self):
         production = _make_production(["FR"], n_hours=2)
         capa = pd.DataFrame(
-            {"FR": [1000.0]},  # MW
+            {"FR": [1.0]},
             index=pd.Index(["onshore"], name="tec"),
         )
         cf = compute_vre_capacity_factors(production, capa, ["FR"], technologies=["onshore"])
@@ -336,22 +336,24 @@ def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True)
     """Create a minimal valid year directory for _validate_year tests."""
     n = expected_hours(year)
     hours = list(range(n))
-
-    pd.DataFrame({"hour": hours, **{a: [1000.0] * n for a in areas}}).to_csv(
-        tmp_path / "demand.csv", index=False
-    )
-    pd.DataFrame({"hour": hours, **{a: [50.0] * n for a in exo_areas}}).to_csv(
-        tmp_path / "exo_prices.csv", index=False
-    )
     production_types = ["biomass", "gas", "nuclear", "solar", "onshore"]
+
     for area in areas:
-        pd.DataFrame({"hour": hours, **{f: [100.0] * n for f in production_types}}).to_csv(
+        pd.DataFrame({"hour": hours, "demand": [1.0] * n}).to_csv(
+        tmp_path / f"demand_{area}.csv", index=False
+        )
+        pd.DataFrame({"hour": hours, **{f: [.1] * n for f in production_types}}).to_csv(
             tmp_path / f"production_{area}.csv", index=False
         )
-    if include_actual_prices:
-        pd.DataFrame({"hour": hours, **{a: [55.0] * n for a in areas}}).to_csv(
-            tmp_path / "actual_prices.csv", index=False
+        if include_actual_prices:
+            pd.DataFrame({"hour": hours, "price": [55.0] * n}).to_csv(
+                tmp_path / f"prices_{area}.csv", index=False
+            )  
+    for area in exo_areas:
+        pd.DataFrame({"hour": hours, "price": [50.0] * n}).to_csv(
+            tmp_path / f"prices_{area}.csv", index=False
         )
+
 
 
 class TestValidateYear:
@@ -366,10 +368,10 @@ class TestValidateYear:
     def test_missing_demand_fails(self, tmp_path):
         areas, exo_areas = ["FR"], ["CH"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
-        (tmp_path / "demand.csv").unlink()
+        (tmp_path / "demand_FR.csv").unlink()
         is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
         assert not is_valid
-        assert any("demand.csv" in i for i in issues)
+        assert any("demand_FR.csv" in i for i in issues)
 
     def test_missing_actual_prices_does_not_fail(self, tmp_path):
         """actual_prices.csv is soft validation: missing should not block."""
@@ -392,25 +394,22 @@ class TestValidateYear:
         areas, exo_areas = ["FR"], ["CH"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
         n_wrong = expected_hours(2021) - 10
-        pd.DataFrame({"hour": list(range(n_wrong)), "FR": [1000.0] * n_wrong}).to_csv(
-            tmp_path / "demand.csv", index=False
+        pd.DataFrame({"hour": list(range(n_wrong)), "FR": [1.0] * n_wrong}).to_csv(
+            tmp_path / "demand_FR.csv", index=False
         )
         is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
         assert not is_valid
-        assert any("demand.csv" in i for i in issues)
+        assert any("demand_FR.csv" in i for i in issues)
 
     def test_missing_exo_area_in_prices_fails(self, tmp_path):
         """exo_prices.csv missing an exo area column is flagged."""
         areas, exo_areas = ["FR"], ["CH", "NO"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
         # Overwrite exo_prices.csv with only one of the two exo areas
-        n = expected_hours(2021)
-        pd.DataFrame({"hour": list(range(n)), "CH": [50.0] * n}).to_csv(
-            tmp_path / "exo_prices.csv", index=False
-        )
+        (tmp_path / "prices_NO.csv").unlink()
         is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
         assert not is_valid
-        assert any("exo_prices.csv" in i for i in issues)
+        assert any("prices_NO.csv" in i for i in issues)
 
 
 # ---------------------------------------------------------------------------
@@ -418,17 +417,18 @@ class TestValidateYear:
 # ---------------------------------------------------------------------------
 
 
-def _make_actual_prices_csv(year_dir, year, areas, n_hours=None):
-    """Write a minimal actual_prices.csv with datetime hour strings."""
+def _make_prices_csvs(year_dir, year, areas, n_hours=None):
+    """Write per-area prices_<area>.csv files matching collect output format."""
     from eoles_dispatch.utils import cet_year_bounds
 
     start, _ = cet_year_bounds(year)
     if n_hours is None:
         n_hours = expected_hours(year)
     hours = pd.date_range(start, periods=n_hours, freq="h")
-    df = pd.DataFrame({"hour": hours, **{a: [55.0] * n_hours for a in areas}})
     year_dir.mkdir(parents=True, exist_ok=True)
-    df.to_csv(year_dir / "actual_prices.csv", index=False)
+    for area in areas:
+        df = pd.DataFrame({"hour": hours, "prices": [55.0] * n_hours})
+        df.to_csv(year_dir / f"prices_{area}.csv", index=False)
 
 
 class TestCopyActualPrices:
@@ -436,7 +436,7 @@ class TestCopyActualPrices:
         """Should create validation/actual_prices.csv when source exists."""
         year, areas = 2021, ["FR", "BE"]
         data_dir = tmp_path / "data"
-        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
@@ -455,7 +455,7 @@ class TestCopyActualPrices:
         """Output hour column must be POSIX hours (int), not datetimes."""
         year, areas = 2021, ["FR"]
         data_dir = tmp_path / "data"
-        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
@@ -467,7 +467,7 @@ class TestCopyActualPrices:
         year = 2021
         all_areas = ["FR", "BE", "DE"]
         data_dir = tmp_path / "data"
-        _make_actual_prices_csv(data_dir / str(year), year, all_areas)
+        _make_prices_csvs(data_dir / str(year), year, all_areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         _copy_actual_prices(data_dir, run_dir, year, ["FR"], months=None)
@@ -480,7 +480,7 @@ class TestCopyActualPrices:
         """With months=(1, 3), output should cover only Jan-Mar hours."""
         year, areas = 2021, ["FR"]
         data_dir = tmp_path / "data"
-        _make_actual_prices_csv(data_dir / str(year), year, areas)
+        _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         _copy_actual_prices(data_dir, run_dir, year, areas, months=(1, 3))

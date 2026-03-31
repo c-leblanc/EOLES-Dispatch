@@ -145,8 +145,9 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
         area: Area code (for reporting, e.g. "FR").
     """
     if series.isna().sum() == 0:
-        return series
+        return series, 0
 
+    total_filled = 0
     result = series.copy()
     gaps = _find_gaps(result)
     hours_per_week = 7 * 24
@@ -169,9 +170,10 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
             result.iloc[gap_start : gap_start + gap_length] = chunk.iloc[
                 offset_in_chunk : offset_in_chunk + gap_length
             ].values
-            logger.debug(f"  Gap at {gap_time} ({gap_hours}h): linear interpolation")
+            # logger.debug(f"  Gap at {gap_time} ({gap_hours}h): linear interpolation")
             if report:
                 report.add(variable, area, gap_time, gap_hours, "linear_interpolation")
+            total_filled += gap_hours
             continue
 
         filled = False
@@ -186,7 +188,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                     result.iloc[gap_start : gap_start + gap_length] = fill.values
                     direction = "next" if sign > 0 else "previous"
                     method = f"weekly_analogue_{direction}"
-                    logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week")
+                    # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week")
                     filled = True
                     break
 
@@ -198,9 +200,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                         result.iloc[gap_start : gap_start + gap_length] = fill.values
                         direction = "next" if sign > 0 else "previous"
                         method = f"weekly_analogue_{direction}_±2"
-                        logger.info(
-                            f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week (±2)"
-                        )
+                        # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week (±2)")
                         filled = True
                         break
 
@@ -214,7 +214,7 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                     result.iloc[gap_start : gap_start + gap_length] = fill.values
                     direction = "next" if sign > 0 else "previous"
                     method = f"yearly_analogue_{direction}"
-                    logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} year")
+                    # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} year")
                     filled = True
                     break
 
@@ -231,10 +231,10 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                 avg = np.mean(candidates, axis=0)
                 result.iloc[gap_start : gap_start + gap_length] = avg
                 method = f"multi_year_average_{len(candidates)}y"
-                logger.info(
-                    f"  Gap at {gap_time} ({gap_hours}h): "
-                    f"filled from {len(candidates)}-year average"
-                )
+                # logger.info(
+                #    f"  Gap at {gap_time} ({gap_hours}h): "
+                #    f"filled from {len(candidates)}-year average"
+                # )
                 filled = True
 
         # Last resort: linear interpolation (better than zeros)
@@ -248,36 +248,48 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
                 offset_in_chunk : offset_in_chunk + gap_length
             ].values
             method = "linear_interpolation_fallback"
-            logger.warning(
-                f"  Gap at {gap_time} ({gap_hours}h): "
-                f"no analogue found, used linear interpolation as last resort"
-            )
+            # logger.warning(
+            #    f"  Gap at {gap_time} ({gap_hours}h): "
+            #    f"no analogue found, used linear interpolation as last resort"
+            # )
 
         if report:
             report.add(variable, area, gap_time, gap_hours, method)
+        total_filled += gap_hours
 
     # Final safety net: no NaN should remain
     remaining_nans = result.isna().sum()
     if remaining_nans > 0:
-        logger.warning(
-            f"  {remaining_nans} NaN values remain after gap-filling, "
-            f"forward-filling then back-filling"
-        )
+        # logger.warning(
+        #    f"  {remaining_nans} NaN values remain after gap-filling, "
+        #    f"forward-filling then back-filling"
+        # )
         if report:
             report.add(variable, area, "various", remaining_nans, "ffill_bfill_safety_net")
         result = result.ffill().bfill()
+        total_filled += remaining_nans
 
-    return result
+    return result, total_filled
 
 
 # ── Gap-fill report class ──
 
-
+# FIXME : Il faut écrire le report au fur et à mesure, sinon il disparaît en cas d'interruption de la collecte
 class Report:
     """Accumulates gap-filling operations and writes a summary CSV + text report."""
 
     def __init__(self):
         self.entries = []  # list of dicts
+
+    @classmethod
+    def load(cls, csv_path):
+        """Load a previously saved gap-fill report CSV to resume collection."""
+        report = cls()
+        csv_path = Path(csv_path)
+        if csv_path.exists():
+            df = pd.read_csv(csv_path)
+            report.entries = df.to_dict("records")
+        return report
 
     def add(self, variable, area, gap_start, gap_hours, method, scaling_ratio=None):
         self.entries.append(

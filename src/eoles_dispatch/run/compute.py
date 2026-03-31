@@ -31,7 +31,7 @@ def compute_nmd(production, areas, nmd_tecs=NMD_TYPES):
         df = production[area]
         nmd_cols = [c for c in nmd_tecs if c in df.columns]
         if nmd_cols:
-            nmd_series = df[nmd_cols].sum(axis=1) / 1000  # MW → GW
+            nmd_series = df[nmd_cols].sum(axis=1)
         else:
             nmd_series = pd.Series(0, index=df.index)
         frames[area] = pd.DataFrame(
@@ -60,8 +60,8 @@ def compute_vre_capacity_factors(
     Args:
         production: dict {area: DataFrame} with columns ['hour', prodtype1, ...].
             Already filtered to the simulation period. 'hour' is POSIX hours.
-        installed_capa: DataFrame with tec as index and area codes as columns (MW).
-            Loaded from data/<year>/installed_capacity.csv.
+        installed_capa: dict {area: DataFrame} with tec as index and capacity (GW) as values.
+            Loaded from data/<year>/installed_capacity_<area>.csv.
         areas: List of area codes.
         technologies: List of VRE tech names (default: offshore, onshore, solar, river).
 
@@ -75,18 +75,18 @@ def compute_vre_capacity_factors(
             if tec not in df.columns:
                 continue
 
-            prod_mw = df[tec].values
+            prod_gw = df[tec].values
 
             # Use installed capacity if available, otherwise approximate from max production
             if (
                 installed_capa is not None
-                and tec in installed_capa.index
-                and area in installed_capa.columns
+                and installed_capa[area] is not None
+                and tec in installed_capa[area].index
             ):
-                capa_mw = installed_capa.loc[tec, area]
+                capa_gw = installed_capa[area].loc[tec].item()
             else:
-                capa_mw = prod_mw.max()
-            cf = prod_mw / capa_mw if capa_mw > 0 else np.zeros_like(prod_mw)
+                capa_gw = prod_gw.max()
+            cf = prod_gw / capa_gw if capa_gw > 0 else np.zeros_like(prod_gw)
 
             frame = pd.DataFrame(
                 {
@@ -116,8 +116,8 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
     Args:
         production: dict {area: DataFrame} with columns ['hour', ..., 'nuclear'].
             Already filtered to the simulation period. 'hour' is POSIX hours.
-        installed_capa: DataFrame with tec as index and area codes as columns (MW).
-            Loaded from data/<year>/installed_capacity.csv.
+        installed_capa: dict {area: DataFrame} with tec as index and capacity (GW) as values.
+            Loaded from data/<year>/installed_capacity_<area>.csv.
         areas: List of area codes.
         hour_week: DataFrame with columns ['hour', 'week'] (POSIX hours → YYWW).
 
@@ -136,17 +136,17 @@ def compute_nuclear_max_af(production, installed_capa, areas, hour_week):
 
         merged = df[["hour", "nuclear"]].merge(hour_week, on="hour", how="inner")
 
-        # Get installed nuclear capacity (MW)
+        # Get installed nuclear capacity (GW)
         if (
             installed_capa is not None
-            and "nuclear" in installed_capa.index
-            and area in installed_capa.columns
+            and installed_capa[area] is not None
+            and "nuclear" in installed_capa[area].index
         ):
-            capa_mw = installed_capa.loc["nuclear", area]
+            capa_gw = installed_capa[area].loc["nuclear"].item()
         else:
-            capa_mw = merged["nuclear"].max() if merged["nuclear"].max() > 0 else 1
+            capa_gw = merged["nuclear"].max() if merged["nuclear"].max() > 0 else 1
 
-        merged["af"] = np.clip(merged["nuclear"] / max(capa_mw, 1), 0, 1)
+        merged["af"] = np.clip(merged["nuclear"] / max(capa_gw, 1), 0, 1)
 
         # Weekly max
         weekly = merged.groupby("week")["af"].max().reset_index()
@@ -214,14 +214,14 @@ def compute_lake_inflows(
             prod_hours["phs_in"] = 0.0
 
         # Net inflow = lake + phs + η * phs_in  (phs_in is negative)
-        prod_hours["inflow_mw"] = (
+        prod_hours["inflow_gw"] = (
             prod_hours["lake"] + prod_hours["phs"] + eta_phs * prod_hours["phs_in"]
         )
 
         # Merge with month mapping and aggregate
         merged = prod_hours.merge(hour_month, on="hour", how="inner")
-        monthly = merged.groupby("month")["inflow_mw"].sum().reset_index()
-        monthly["value"] = monthly["inflow_mw"].clip(lower=0) / 1e6  # MWh → TWh
+        monthly = merged.groupby("month")["inflow_gw"].sum().reset_index()
+        monthly["value"] = monthly["inflow_gw"].clip(lower=0) / 1e3  # GWh → TWh
         monthly["area"] = area
         frames.append(monthly[["area", "month", "value"]])
 
@@ -257,23 +257,23 @@ def compute_hydro_limits(production, areas, hour_month):
 
         # Discharge: lake + PHS production
         lake_prod = df["lake"].values if "lake" in df.columns else np.zeros(len(df))
-        phs_gen = df["phs"].values if "phs" in df.columns else np.zeros(len(df))
-        prod_hours["out_mw"] = np.clip(lake_prod + phs_gen, 0, None)
+        phs_out = df["phs"].values if "phs" in df.columns else np.zeros(len(df))
+        prod_hours["out"] = np.clip(lake_prod + phs_out, 0, None)
 
         # Charge: abs(phs_in) — phs_in is negative
         phs_in = df["phs_in"].values if "phs_in" in df.columns else np.zeros(len(df))
-        prod_hours["in_mw"] = np.abs(phs_in)
+        prod_hours["in"] = np.abs(phs_in)
 
         # Merge with month mapping and get monthly max
         merged = prod_hours.merge(hour_month, on="hour", how="inner")
 
-        monthly_out = merged.groupby("month")["out_mw"].max().reset_index()
-        monthly_out["value"] = monthly_out["out_mw"] / 1000  # MW → GW
+        monthly_out = merged.groupby("month")["out"].max().reset_index()
+        monthly_out["value"] = monthly_out["out"]
         monthly_out["area"] = area
         frames_out.append(monthly_out[["area", "month", "value"]])
 
-        monthly_in = merged.groupby("month")["in_mw"].max().reset_index()
-        monthly_in["value"] = monthly_in["in_mw"] / 1000  # MW → GW
+        monthly_in = merged.groupby("month")["in"].max().reset_index()
+        monthly_in["value"] = monthly_in["in"]
         monthly_in["area"] = area
         frames_in.append(monthly_in[["area", "month", "value"]])
 

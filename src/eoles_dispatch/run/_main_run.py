@@ -119,6 +119,7 @@ def create_run(
     logger.info("  Saving formatted inputs...")
     save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas)
 
+    # TODO : Load validation data upon viz --validation, not upon create
     # Copy historical prices and production for validation (if available)
     _copy_actual_prices(data_dir, run_dir, year, areas, months)
     _copy_actual_production(data_dir, run_dir, year, areas, months)
@@ -345,25 +346,32 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
 
     from ..utils import cet_period_bounds, to_posix_hours
 
-    src = data_dir / str(year) / "actual_prices.csv"
-    if not src.exists():
-        return
-
-    df = pd.read_csv(src, parse_dates=["hour"])
-
     start, end = cet_period_bounds(year, months)
-    df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+    area_frames = []
+    for area in areas:
+        src = data_dir / str(year) / f"prices_{area}.csv"
+        if not src.exists():
+            continue
+    
+        df = pd.read_csv(src, parse_dates=["hour"])
+        df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
+        if df.empty:
+            continue
+        # Add "area" variable
+        result = pd.DataFrame({"area": area, "hour": df["hour"], "price": df["prices"]})
+        # Convert hour to POSIX hours (int)
+        result["hour"] = to_posix_hours(result["hour"])
 
-    # Convert hour to POSIX hours (int)
-    df["hour"] = to_posix_hours(df["hour"])
+        area_frames.append(result)
 
-    # Keep only requested areas
-    cols = ["hour"] + [a for a in areas if a in df.columns]
-    df = df[cols]
+    if not area_frames:
+        return
+    combined_long = pd.concat(area_frames, ignore_index=True)
+    combined_wide = combined_long.pivot_table(index="hour", columns="area", values="price")
 
     validation_dir = run_dir / "validation"
     validation_dir.mkdir(exist_ok=True)
-    df.to_csv(validation_dir / "actual_prices.csv", index=False)
+    combined_wide.to_csv(validation_dir / "actual_prices.csv", index=True)
 
 
 def _copy_actual_production(data_dir, run_dir, year, areas, months):
@@ -371,7 +379,7 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
 
     Reads production_<area>.csv files from the year data directory, filters to
     the requested areas and time period, aggregates raw technology columns to
-    the agg level (via RAW_TO_AGG), converts MW → GW, converts timestamps to
+    the agg level (via RAW_TO_AGG), converts timestamps to
     POSIX hours.  Then joins demand from the run inputs and derives
     net_imports / net_exports as demand minus total production.
 
@@ -410,10 +418,9 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
             else:
                 agg_cols[agg_name] = agg_cols[agg_name] + df[raw_col].values
 
-        # Convert MW → GW
         result = pd.DataFrame({"hour": df["hour"], "area": area})
         for agg_name, vals in agg_cols.items():
-            result[agg_name] = vals / 1000.0
+            result[agg_name] = vals
 
         # Convert hour to POSIX hours (int)
         result["hour"] = to_posix_hours(result["hour"])
@@ -444,7 +451,7 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
     validation_dir.mkdir(exist_ok=True)
     combined.to_csv(validation_dir / "actual_production.csv", index=False)
 
-
+# TODO : Detail and tailor to the list of areas necessary for simulation
 def _ensure_data_available(data_dir, year, areas, exo_areas):
     """Check if data for the given year is available, download if not.
 

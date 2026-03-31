@@ -24,43 +24,33 @@ Called from:
 
 Data structure:
     data/<year>/
-        production_<area>.csv   - hourly generation by production type (MW)
-        demand.csv              - hourly demand per area (MW)
-        installed_capacity.csv  - installed capacity: technologies in rows, areas in columns (MW)
-        exo_prices.csv          - hourly day-ahead prices for exo areas (EUR/MWh)
-        gap_fill_report.csv/txt - gap-filling audit trail
+        production_<area>.csv         - hourly generation by production type (GW)
+        demand_<area>.csv             - hourly demand for one area (GW)
+        installed_capacity_<area>.csv - installed capacity: ['tec', 'value'] (GW)
+        prices_<area>.csv             - hourly day-ahead prices for one area (EUR/MWh)
+                                        covers both modeled areas (validation) and
+                                        exo areas (model input); areas never overlap
+        _gap_fill_report.csv/txt      - gap-filling audit trail
     data/renewable_ninja/
         solar.csv, onshore_current.csv, ...  - capacity factor profiles
 
 Functions:
     collect_all(output_dir, start_year, end_year, ...)
-        Top-level orchestrator: loops over years, calls the three collect_*
-        functions below, validates, and saves.
+        Top-level orchestrator: loops over years, calls collect_history,
+        validates, and saves.
         Called from __main__.py and run.py.
 
-    collect_demand(client, areas, start, end, gap_report)
-        Download hourly demand per area (GW). ENTSO-E primary, Elexon
-        fallback for UK. Gap-fills then returns a DataFrame.
+    collect_history(output_dir, client, year, areas, exo_areas)
+        Download all ENTSO-E data for a single year. Loops over demand,
+        production, and prices via a config-driven call to _collect_timeseries,
+        then handles installed_capacity separately.
         Called from collect_all.
 
-    collect_production(client, areas, start, end, gap_report)
-        Download hourly generation by production type per area (MW). ENTSO-E
-        primary, Elexon fallback for UK. PHS split into phs/phs_in.
-        Called from collect_all.
-
-    collect_installed_capacity(client, areas, year, out_dir)
-        Download installed generation capacity (MW). Saves wide-format CSV
-        with technologies in rows and areas in columns.
-        ENTSO-E primary, Elexon fallback for UK. Static yearly data.
-        Called from collect_all.
-
-    collect_exo_prices(client, exo_areas, start, end, gap_report)
-        Download day-ahead prices for non-modeled areas (EUR/MWh).
-        Called from collect_all.
-
-    _validate_year(year_dir, year, areas, exo_areas)
-        Check row counts, NaN, and expected columns after collection.
-        Called from collect_all.
+    collect_installed_capacity(client, areas, year)
+        Download installed generation capacity (MW). Returns a dict of
+        per-area DataFrames with columns ['tec', 'value'].
+        ENTSO-E primary, Elexon fallback for UK.
+        Called from collect_history.
 
 Usage:
     eoles-dispatch collect --start 2020 --end 2024
@@ -68,6 +58,7 @@ Usage:
     eoles-dispatch collect --start 2020 --end 2024 --source ninja
     eoles-dispatch collect --start 2021 --end 2022 --force
 """
+# TODO : Séparer collecte pour simulation et collecte pour validation ?
 
 import logging
 import shutil
@@ -86,14 +77,9 @@ logger = logging.getLogger(__name__)
 
 # ── Main orchestrator ──
 
+
 def collect_all(
-    output_dir,
-    start_year,
-    end_year,
-    areas=None,
-    exo_areas=None,
-    source="all",
-    force=False,
+    output_dir, start_year, end_year, areas=None, exo_areas=None, source="all", force=False
 ):
     if areas is None:
         areas = list(DEFAULT_AREAS)
@@ -123,13 +109,19 @@ def collect_all(
                 )
                 continue
             elif corrupt_dir.exists():
-                logger.info(f"Data for {year} present locally is corrupt: removing corrupt files and redownloading them...")
+                logger.info(
+                    f"Data for {year} present locally is corrupt: removing corrupt files and redownloading them..."
+                )
                 # Remove only files with 'corrupt' in the name
                 for f in corrupt_dir.glob("*corrupt*"):
                     f.unlink()
                 corrupt_dir.rename(partial_dir)
-            elif partial_dir.exists(): #Case were a collect_all was interrupted before completion and validation
-                logger.info(f"Data for {year} was not fully downloaded: checking if present files are valid...")
+            elif (
+                partial_dir.exists()
+            ):  # Case were a collect_all was interrupted before completion and validation
+                logger.info(
+                    f"Data for {year} was not fully downloaded: checking if present files are valid..."
+                )
                 _validate_year(partial_dir, year, areas, exo_areas)
                 # Remove corrupt files (renamed by _validate_year) so they get re-downloaded
                 for f in partial_dir.glob("*corrupt*"):
@@ -139,8 +131,10 @@ def collect_all(
                 partial_dir.mkdir(parents=True)
 
             # Launch download of history data for <year>
-            collect_history(output_dir=partial_dir, client=client, year=year, areas=areas, exo_areas=exo_areas)
-            
+            collect_history(
+                output_dir=partial_dir, client=client, year=year, areas=areas, exo_areas=exo_areas
+            )
+
             # Validate history data for <year>
             is_valid, issues = _validate_year(partial_dir, year, areas, exo_areas)
             if is_valid:
@@ -155,8 +149,16 @@ def collect_all(
 
     if source in ("all", "ninja"):
         ninja_dir = output_dir / "renewable_ninja"
-        ninja_files = ["solar.csv", "onshore_current.csv", "onshore_future.csv", "offshore_current.csv", "offshore_future.csv"]
-        ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
+        ninja_files = [
+            "solar.csv",
+            "onshore_current.csv",
+            "onshore_future.csv",
+            "offshore_current.csv",
+            "offshore_future.csv",
+        ]
+        ninja_missing = not ninja_dir.exists() or not all(
+            (ninja_dir / f).exists() for f in ninja_files
+        )
 
         logger.info("=== Collecting Renewables.ninja profiles ===")
 
@@ -164,7 +166,9 @@ def collect_all(
             logger.info(f"Renewable Ninja data not found in {ninja_dir}, downloading...")
             collect_ninja(ninja_dir, areas=areas)
         elif force:
-            logger.info("Renewable Ninja data already available locally, force remove and redownload...")
+            logger.info(
+                "Renewable Ninja data already available locally, force remove and redownload..."
+            )
             shutil.rmtree(ninja_dir)
             collect_ninja(ninja_dir, areas=areas)
         else:
@@ -185,6 +189,7 @@ def collect_all(
 
 # ── Intermediate-level orchestration ──
 
+
 def collect_history(
     output_dir,
     client,
@@ -194,10 +199,11 @@ def collect_history(
 ):
     """Download all time-varying ENTSO-E data for a single year and save to CSV.
 
-    Fetches demand, generation by production type, installed capacity, exogenous
-    prices, and actual prices for modeled areas. Writes directly into
-    output_dir — does not create partial/corrupt directories (that lifecycle
-    is managed by collect_all).
+    Fetches demand, generation by production type, prices, and installed
+    capacity for all areas. Each data type is saved as one file per area:
+    demand_<area>.csv, production_<area>.csv, prices_<area>.csv,
+    installed_capacity_<area>.csv. Per-area file checks allow resuming
+    interrupted runs without re-downloading already-collected areas.
 
     Args:
         output_dir: Directory to write CSV files into (e.g. data/<year>_partial/).
@@ -206,225 +212,240 @@ def collect_history(
         areas: Modeled country codes (default: DEFAULT_AREAS).
         exo_areas: Non-modeled country codes for price data (default: DEFAULT_EXO_AREAS).
     """
-    # Initialize gap-fill report for this year
-    gap_report = Report()
+    if areas is None:
+        areas = list(DEFAULT_AREAS)
+    if exo_areas is None:
+        exo_areas = list(DEFAULT_EXO_AREAS)
 
-    # CET year bounds (naive UTC — entsoe module handles tz conversion)
+    existing_report = output_dir / "_gap_fill_report.csv"
+    gap_report = Report.load(existing_report) if existing_report.exists() else Report()
     start, end = cet_year_bounds(year)
     canon_idx = canonical_index(year)
+    n_exp = expected_hours(year)
 
-    # 1. Demand (collect_demand returns GW, store as MW for raw data)
-    logger.info("=== Demand ===")
-    demand_path = output_dir / "demand.csv"
-    if not demand_path.exists():
-        demand = collect_demand(client, areas, start, end, gap_report, canon_idx)
-        demand_mw = demand.copy()
-        area_cols = [c for c in demand_mw.columns if c != "hour"]
-        demand_mw[area_cols] = demand_mw[area_cols] * 1000  # GW → MW
-        demand_mw.to_csv(demand_path, index=False)
-        logger.info(f"  → demand.csv ({len(demand_mw)} rows)")
-    else:
-        logger.info("  → demand.csv already exists, skipping")
+    # Time series: config-driven loop over demand, production, prices
+    ts_configs = [
+        (
+            "demand",
+            areas,
+            dict(
+                entsoe_fetch=lambda area: entsoe.fetch_demand(client, area, start, end),
+                elexon_fetch=lambda: elexon.fetch_demand(start, end),
+                usable_fn=lambda raw: entsoe.is_usable(raw, n_exp),
+            ),
+        ),
+        (
+            "production",
+            areas,
+            dict(
+                entsoe_fetch=lambda area: entsoe.fetch_generation(client, area, start, end),
+                elexon_fetch=lambda: elexon.fetch_generation(start, end),
+                usable_fn=lambda raw: _is_production_usable(raw, n_exp),
+            ),
+        ),
+        (
+            "prices",
+            list(exo_areas) + list(areas),
+            dict(
+                entsoe_fetch=lambda area: entsoe.fetch_day_ahead_prices(client, area, start, end),
+                elexon_fetch=lambda: elexon.fetch_day_ahead_prices(start, end),
+                usable_fn=lambda raw: entsoe.is_usable(raw, n_exp),
+            ),
+        ),
+    ]
 
-    # 2. Raw production per area
-    logger.info("=== Production ===")
-    # Filter out areas that already have production files
-    areas_prod_missing = [a for a in areas if not (output_dir / f"production_{a}.csv").exists()]
-    if areas_prod_missing:
-        if areas_prod_missing != areas:
-            areas_prod_existing = [a for a in areas if a not in areas_prod_missing]
-            logger.info(f"  → production already available for {areas_prod_existing}, downloading missing: {areas_prod_missing}")
-        production = collect_production(client, areas_prod_missing, start, end, gap_report, canon_idx)
-        for area, prod_df in production.items():
-            prod_df.to_csv(output_dir / f"production_{area}.csv", index=False)
-            logger.info(f"  → production_{area}.csv ({len(prod_df)} rows, {len(prod_df.columns)-1} production types)")
-    else:
-        logger.info("  → all production files already exist, skipping")
+    for ts_type, area_list, config in ts_configs:
+        logger.info(f"=== {ts_type.capitalize()} ===")
+        missing = [a for a in area_list if not (output_dir / f"{ts_type}_{a}.csv").exists()]
+        if not missing:
+            logger.info(f"  → all {ts_type} files already exist, skipping")
+            continue
+        existing = [a for a in area_list if a not in missing]
+        if existing:
+            logger.info(
+                f"  → {ts_type} already available for {existing}, downloading missing: {missing}"
+            )
 
-    # 3. Installed capacity per area
+        _collect_timeseries(
+            ts_type=ts_type,
+            areas=missing,
+            canon_idx=canon_idx,
+            gap_report=gap_report,
+            output_dir=output_dir,
+            **config,
+        )
+
+    # Installed capacity (not a time series — separate handling)
     logger.info("=== Installed capacity ===")
-    installed_capacity_path = output_dir / "installed_capacity.csv"
-    if not installed_capacity_path.exists():
-        installed_capacity = collect_installed_capacity(client, areas, year)
-        installed_capacity.to_csv(installed_capacity_path, index=True)
-        logger.info(f"  → installed_capacity.csv ({len(installed_capacity)} technologies, {len(installed_capacity.columns)} areas)")
+    areas_ic_missing = [
+        a for a in areas if not (output_dir / f"installed_capacity_{a}.csv").exists()
+    ]
+    if not areas_ic_missing:
+        logger.info("  → all installed_capacity files already exist, skipping")
     else:
-        logger.info("  → installed_capacity.csv already exists, skipping")
+        existing_ic = [a for a in areas if a not in areas_ic_missing]
+        if existing_ic:
+            logger.info(
+                f"  → installed_capacity already available for {existing_ic}, downloading missing: {areas_ic_missing}"
+            )
+        installed = collect_installed_capacity(client, areas_ic_missing, year)
+        for area, df in installed.items():
+            path = output_dir / f"installed_capacity_{area}.csv"
+            df.to_csv(path, index=False)
+            logger.info(f"  → installed_capacity_{area}.csv ({len(df)} technologies)")
 
-    # 4. Exogenous prices
-    logger.info("=== Exogenous prices ===")
-    exo_prices_path = output_dir / "exo_prices.csv"
-    if not exo_prices_path.exists():
-        exo_prices = collect_prices(client, exo_areas, start, end, gap_report, canon_idx)
-        exo_prices.to_csv(exo_prices_path, index=False)
-        logger.info(f"  → exo_prices.csv ({len(exo_prices)} rows)")
-    else:
-        logger.info("  → exo_prices.csv already exists, skipping")
-
-    # 5. Actual prices for modeled areas (validation, not model input)
-    logger.info("=== Actual prices (modeled areas) ===")
-    actual_prices_path = output_dir / "actual_prices.csv"
-    if not actual_prices_path.exists():
-        actual_prices = collect_prices(client, areas, start, end, gap_report, canon_idx)
-        actual_prices.to_csv(actual_prices_path, index=False)
-        logger.info(f"  → actual_prices.csv ({len(actual_prices)} rows)")
-    else:
-        logger.info("  → actual_prices.csv already exists, skipping")
-
-    # Save gap-fill report in the year directory
     gap_report.save(output_dir)
 
 
+# ── Time series collection helper ──
 
-# ── Demand ──
 
-def collect_demand(client, areas, start, end, gap_report, canon_idx):
-    """Collect actual load for each area, in GW.
+def _is_production_usable(raw, n_expected):
+    """Check whether raw production data has sufficient non-NaN coverage."""
+    if raw is None:
+        return False
+    if isinstance(raw, pd.DataFrame):
+        data_cols = raw.drop(columns=["hour"], errors="ignore")
+        return data_cols.notna().any(axis=1).sum() > n_expected * ENTSOE_MIN_COVERAGE
+    return hasattr(raw, "__len__") and len(raw) > n_expected * ENTSOE_MIN_COVERAGE
 
-    For GB/UK, falls back to the Elexon BMRS API when ENTSO-E data is
-    unavailable or too sparse (post-Brexit).
 
-    Both entsoe.fetch_demand() and elexon.fetch_demand() return hourly
-    naive UTC Series in MW. The orchestrator handles fallback logic,
-    reindexing onto the canonical index, and gap-filling.
+def _collect_timeseries(
+    ts_type,
+    areas,
+    canon_idx,
+    gap_report,
+    output_dir,
+    entsoe_fetch,
+    elexon_fetch=None,
+    usable_fn=None,
+    transform=None,
+):
+    """Fetch, gap-fill, and return time series data for a list of areas.
+
+    Handles the common pattern for demand, production, and prices:
+    ENTSO-E as primary source, optional Elexon fallback for UK, reindexing
+    onto the canonical hourly index, gap-filling, and optional transform.
+
+    For Series results (demand, prices), each area's DataFrame has columns
+    ['hour', label]. For DataFrame results (production), the existing
+    production-type columns are preserved.
 
     Args:
-        client: EntsoePandasClient.
-        areas: List of area codes.
-        start, end: Period bounds (naive UTC).
-        gap_report: Report instance for gap-filling audit trail.
+        areas: List of area codes to fetch.
         canon_idx: DatetimeIndex from canonical_index(year).
+        gap_report: Report instance for gap-filling audit trail.
+        label: String used as column name for scalar series (e.g. "demand",
+            "prices") and in progress/log messages.
+        entsoe_fetch: Callable[(area)] -> pd.Series|pd.DataFrame|None.
+        elexon_fetch: Callable[()] -> pd.Series|pd.DataFrame|None.
+            Called only for UK when ENTSO-E data is not usable. None means
+            no Elexon fallback.
+        usable_fn: Callable[(raw)] -> bool. Returns True when ENTSO-E data
+            is sufficient without a fallback. None means any non-empty
+            result is considered usable.
+        transform: Callable applied to the filled series/DataFrame before
+            saving (e.g. unit conversion). None means no transform.
 
-    Returns a DataFrame with columns ['hour', area1, area2, ...].
+    Returns:
+        dict {area: pd.DataFrame} with an 'hour' column.
+        Areas for which no data is available are absent from the dict.
     """
-    frames = {}
+    if usable_fn is None:
+
+        def usable_fn(raw):
+            return raw is not None and (not hasattr(raw, "__len__") or len(raw) > 0)
+
+    result = {}
     for area in areas:
-        series = None
-        print(f"Demand {area}... ", end='', flush=True)
-        # Try ENTSO-E first
-        entsoe_partial = None
+        data = None
+        print(f"{ts_type.capitalize()} {area}... ", end="", flush=True)
+
+        # Try ENTSO-E
         try:
-            raw = entsoe.fetch_demand(client, area, start, end)
-            if raw is not None and entsoe.is_usable(raw, start, end):
-                series = raw
-            elif area == "UK" and raw is not None:
-                print(" partial ENTSO-E, filling gaps with Elexon...", end='', flush=True)
-                entsoe_partial = raw
+            raw = entsoe_fetch(area)
+            is_empty = raw is None or (hasattr(raw, "__len__") and len(raw) == 0)
+            if not is_empty:
+                data = raw
         except Exception as e:
             if area == "UK":
-                print(" no data at ENTSO-E, try Elexon...", end='', flush=True)
+                print(" no data at ENTSO-E, try Elexon...", end="", flush=True)
             else:
                 print(f"FAILED ({type(e).__name__})")
-                logger.warning("Demand %s error: %s", area, e)
+                logger.warning("%s %s error: %s", ts_type.capitalize(), area, e)
                 continue
 
-        # Elexon fallback for UK: fill gaps in partial ENTSO-E data
-        if series is None and area == "UK":
+        # Elexon fallback for UK when ENTSO-E data is absent or insufficient
+        if elexon_fetch is not None and area == "UK" and not usable_fn(data):
+            if data is not None:
+                print(" partial ENTSO-E, filling gaps with Elexon...", end="", flush=True)
             try:
-                elexon_demand = elexon.fetch_demand(start, end)
-                if elexon_demand is not None and len(elexon_demand) > 0:
-                    if entsoe_partial is not None:
-                        series = entsoe_partial.combine_first(elexon_demand)
+                elexon_data = elexon_fetch()
+                is_elexon_empty = elexon_data is None or (
+                    hasattr(elexon_data, "__len__") and len(elexon_data) == 0
+                )
+                if not is_elexon_empty:
+                    if data is not None:
+                        # Merge: keep ENTSO-E where available, Elexon fills gaps
+                        if isinstance(data, pd.DataFrame):
+                            ep = data.set_index("hour") if "hour" in data.columns else data
+                            el = (
+                                elexon_data.set_index("hour")
+                                if "hour" in elexon_data.columns
+                                else elexon_data
+                            )
+                            data = ep.combine_first(el)
+                        else:
+                            data = data.combine_first(elexon_data)
                     else:
-                        series = elexon_demand
+                        data = elexon_data
             except Exception as e:
-                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
-                logger.warning("Demand %s Elexon fallback error: %s", area, e)
-            # If Elexon also failed, use whatever ENTSO-E partial data we have
-            if series is None and entsoe_partial is not None:
-                series = entsoe_partial
+                print(f" Elexon fallback FAILED ({type(e).__name__})", end="", flush=True)
+                logger.warning("%s %s Elexon fallback error: %s", ts_type.capitalize(), area, e)
 
-        if series is None:
+        if data is None or (hasattr(data, "__len__") and len(data) == 0):
             print("no data available (KO)")
             continue
 
-        print("OK")
-        series = series.reindex(canon_idx)
-        series = interpolate_gaps(series, report=gap_report, variable="demand", area=area)
-        frames[area] = series / 1000  # MW → GW
-        
+        print("OK", end="", flush=True)  # TODO : Vérifier que il dit OK que quand vraiment OK
 
-    df = pd.DataFrame(frames)
-    df.index.name = "hour"
-    return df.reset_index()
-
-
-# ── Production data (raw generation by production type) ──
-
-def collect_production(client, areas, start, end, gap_report, canon_idx):
-    """Collect raw hourly production by production type for each area.
-
-    Downloads generation data from ENTSO-E (or Elexon for UK fallback),
-    reindexes onto the canonical index, then gap-fills each production series.
-    Both sources return the same format: DataFrame with 'hour' column
-    (naive UTC) and production columns including 'phs' and 'phs_in'.
-
-    Args:
-        client: EntsoePandasClient.
-        areas: List of area codes.
-        start, end: Period bounds (naive UTC from cet_year_bounds).
-        gap_report: Report instance for gap-filling audit trail.
-        canon_idx: DatetimeIndex from canonical_index(year).
-
-    Returns:
-        dict {area: pd.DataFrame} with columns ['hour', production1, ..., phs, phs_in].
-    """
-    result = {}
-    for area in areas:
-        production_df = None
-        entsoe_usable = False
-        print(f"Production {area}... ", end='', flush=True)
-
-        # Try ENTSO-E first
-        try:
-            production_df = entsoe.fetch_generation(client, area, start, end)
-            if production_df is not None:
-                n_expected = expected_hours(start.year)
-                if len(production_df) > n_expected * ENTSOE_MIN_COVERAGE:
-                    entsoe_usable = True
-        except Exception as e:
-            if area == "UK":
-                print(" no data at ENTSO-E, try Elexon...", end='', flush=True)
-            else:
-                print(f"FAILED ({type(e).__name__})")
-                logger.warning("Production %s error: %s", area, e)
-                continue
-
-        # Elexon fallback for UK
-        if not entsoe_usable and area == "UK":
-            try:
-                elexon_df = elexon.fetch_generation(start, end)
-                if elexon_df is not None and len(elexon_df) > 0:
-                    if production_df is not None and len(production_df) > 0:
-                        # Merge: keep ENTSO-E where available, fill gaps with Elexon
-                        entsoe_indexed = production_df.set_index("hour")
-                        elexon_indexed = elexon_df.set_index("hour")
-                        merged = entsoe_indexed.combine_first(elexon_indexed)
-                        production_df = merged.reset_index()
-                    else:
-                        production_df = elexon_df
-            except Exception as e:
-                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
-                logger.warning("Production %s Elexon fallback error: %s", area, e)
-
-        if production_df is not None and len(production_df) > 0:
-            print("OK")
-            # Reindex onto canonical index, then gap-fill each production column
-            indexed = production_df.set_index("hour")
-            indexed = indexed.reindex(canon_idx)
+        # Reindex onto canonical index and gap-fill
+        gaps_filled = 0
+        if isinstance(data, pd.DataFrame):
+            if "hour" in data.columns:
+                data = data.set_index("hour")
+            indexed = data.reindex(canon_idx)
             for col in indexed.columns:
-                indexed[col] = interpolate_gaps(
+                indexed[col], col_filled = interpolate_gaps(
                     indexed[col], report=gap_report, variable=col, area=area
                 )
+                gaps_filled += col_filled
+            if transform is not None:
+                indexed = transform(indexed)
             indexed.index.name = "hour"
             result[area] = indexed.reset_index()
         else:
-            print("no data available (KO)")
+            # Series (demand, prices)
+            series = data.reindex(canon_idx)
+            series, gaps_filled = interpolate_gaps(
+                series, report=gap_report, variable=ts_type, area=area
+            )
+            if transform is not None:
+                series = transform(series)
+            result[area] = series.to_frame(name=ts_type).rename_axis("hour").reset_index()
+
+        if gaps_filled > 0:
+            print(f" [Gaps in data: {gaps_filled} data points filled]", end="", flush=True)
+
+        path = output_dir / f"{ts_type}_{area}.csv"
+        result[area].to_csv(path, index=False)
+        print(f" → {ts_type}_{area}.csv ({len(result[area])} rows)")
 
     return result
 
 
 # ── Installed capacity ──
+
 
 def collect_installed_capacity(client, areas, year):
     """Collect installed generation capacity per production type for each area.
@@ -437,12 +458,13 @@ def collect_installed_capacity(client, areas, year):
         year: Calendar year.
 
     Returns:
-        pd.DataFrame in wide format: technologies in rows, areas in columns (MW).
+        dict {area: pd.DataFrame} with columns ['tec', 'value'] (GW).
+        Areas for which no data is available are absent from the dict.
     """
-    rows = []
+    result = {}
     for area in areas:
         capa = None
-        print(f"Installed capacity {area}... ", end='', flush=True)
+        print(f"Installed capacity {area}... ", end="", flush=True)
 
         # Try ENTSO-E
         try:
@@ -455,73 +477,29 @@ def collect_installed_capacity(client, areas, year):
         # Elexon fallback for UK
         if not capa and area == "UK":
             try:
-                print(" try Elexon...", end='', flush=True)
+                print(" try Elexon...", end="", flush=True)
                 capa = elexon.fetch_installed_capacity(year)
             except Exception as e:
-                print(f" Elexon fallback FAILED ({type(e).__name__})", end='', flush=True)
+                print(f" Elexon fallback FAILED ({type(e).__name__})", end="", flush=True)
                 logger.warning("Installed capacity %s Elexon fallback error: %s", area, e)
 
         if capa:
-            for tec, mw in capa.items():
-                rows.append({"area": area, "tec": tec, "value": mw})
+            result[area] = pd.DataFrame([{"tec": tec, "value": gw} for tec, gw in capa.items()])
             print(f"OK ({len(capa)} types)")
         else:
             print("no data available (KO)")
 
-    long = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["area", "tec", "value"])
-    df = long.pivot(index="tec", columns="area", values="value").fillna(0)
-    df.columns.name = None  # drop "area" header above column names
-    return df
-
-
-# ── Prices ──
-
-def collect_prices(client, areas, start, end, gap_report, canon_idx):
-    """Collect day-ahead prices, in EUR/MWh.
-
-    Uses entsoe.fetch_day_ahead_prices() which handles tz conversion and
-    resampling. The orchestrator reindexes onto the canonical index and
-    handles gap-filling.
-
-    Args:
-        client: EntsoePandasClient.
-        areas: List of area codes.
-        start, end: Period bounds (naive UTC).
-        gap_report: Report instance for gap-filling audit trail.
-        canon_idx: DatetimeIndex from canonical_index(year).
-
-    Returns a DataFrame with columns ['hour', area1, area2, ...].
-    """
-    frames = {}
-    for area in areas:
-        print(f"Prices {area}... ", end='', flush=True)
-        try:
-            prices = entsoe.fetch_day_ahead_prices(client, area, start, end)
-            if prices is None:
-                print("no data available (KO)")
-                continue
-            print("OK")
-            prices = prices.reindex(canon_idx)
-            prices = interpolate_gaps(prices, report=gap_report, max_gap=24, variable="price", area=area)
-            frames[area] = prices
-        except Exception as e:
-            print(f"FAILED ({type(e).__name__})")
-            logger.warning("Prices %s error: %s", area, e)
-            continue
-
-    df = pd.DataFrame(frames)
-    df.index.name = "hour"
-    return df.reset_index()
-
+    return result
 
 
 # ── Validation helper ──
+
 
 def _validate_year(year_dir, year, areas, exo_areas):
     """Validate completeness of a year data directory.
 
     Checks:
-        - All required files exist (demand.csv, exo_prices.csv, production_<area>.csv)
+        - All required per-area files exist
         - Each hourly file has the expected number of rows
         - No NaN values remain
 
@@ -537,65 +515,46 @@ def _validate_year(year_dir, year, areas, exo_areas):
     issues = []
     n_expected = expected_hours(year)
 
-    # Check demand.csv
-    demand_path = year_dir / "demand.csv"
-    if not demand_path.exists():
-        issues.append("demand.csv missing")
-    else:
-        df = pd.read_csv(demand_path)
+    def _check_timeseries_file(path, label):
+        """Hard-validate a per-area hourly CSV. Renames to *_corrupt on failure."""
+        if not path.exists():
+            issues.append(f"{path.name} missing")
+            logger.warning(f"{path.name} missing")
+            return
+        df = pd.read_csv(path)
         if len(df) != n_expected:
-            issues.append(f"demand.csv: {len(df)} rows, expected {n_expected}")
-            demand_path.rename(demand_path.with_name("demand_corrupt.csv"))
-        if df.drop(columns=["hour"], errors="ignore").isna().any().any():
+            issues.append(f"{path.name}: {len(df)} rows, expected {n_expected}")
+            logger.warning(f"{path.name}: {len(df)} rows, expected {n_expected}")
+            path.rename(path.with_stem(path.stem + "_corrupt"))
+        elif df.drop(columns=["hour"], errors="ignore").isna().any().any():
             n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
-            issues.append(f"demand.csv: {n_nan} NaN values remain")
-            demand_path.rename(demand_path.with_name("demand_corrupt.csv"))
+            issues.append(f"{path.name}: {n_nan} NaN values remain")
+            logger.warning(f"{path.name}: {n_nan} NaN values remain")
+            path.rename(path.with_stem(path.stem + "_corrupt"))
 
-    # Check exo_prices.csv
-    exo_path = year_dir / "exo_prices.csv"
-    if not exo_path.exists():
-        issues.append("exo_prices.csv missing")
-    else:
-        df = pd.read_csv(exo_path)
-        if len(df) != n_expected:
-            issues.append(f"exo_prices.csv: {len(df)} rows, expected {n_expected}")
-            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
-        missing_exo = set(exo_areas) - (set(df.columns) - {"hour"})
-        if missing_exo:
-            issues.append(f"exo_prices.csv: missing areas {missing_exo}")
-            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
-        if df.drop(columns=["hour"], errors="ignore").isna().any().any():
-            n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
-            issues.append(f"exo_prices.csv: {n_nan} NaN values remain")
-            exo_path.rename(exo_path.with_name("exo_prices_corrupt.csv"))
-
-    # Check production files
+    # Hard validation: demand and production for modeled areas
     for area in areas:
-        prod_path = year_dir / f"production_{area}.csv"
-        if not prod_path.exists():
-            issues.append(f"production_{area}.csv missing")
-        else:
-            df = pd.read_csv(prod_path)
-            if len(df) != n_expected:
-                issues.append(f"production_{area}.csv: {len(df)} rows, expected {n_expected}")
-                prod_path.rename(prod_path.with_name(f"production_{area}_corrupt.csv"))
-            if df.drop(columns=["hour"], errors="ignore").isna().any().any():
-                n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
-                issues.append(f"production_{area}.csv: {n_nan} NaN values remain")
-                prod_path.rename(prod_path.with_name(f"production_{area}_corrupt.csv"))
+        _check_timeseries_file(year_dir / f"demand_{area}.csv", "demand")
+        _check_timeseries_file(year_dir / f"production_{area}.csv", "production")
 
-    # Check actual_prices.csv (soft validation — warnings only, does not block)
-    actual_path = year_dir / "actual_prices.csv"
-    if not actual_path.exists():
-        logger.warning("actual_prices.csv missing (validation data, not critical)")
-    else:
-        df = pd.read_csv(actual_path)
-        if len(df) != n_expected:
-            logger.warning(f"actual_prices.csv: {len(df)} rows, expected {n_expected}")
-        missing_areas = set(areas) - (set(df.columns) - {"hour"})
-        if missing_areas:
-            logger.warning(f"actual_prices.csv: missing areas {missing_areas}")
+    # Hard validation: prices for exo areas (model inputs)
+    for area in exo_areas:
+        _check_timeseries_file(year_dir / f"prices_{area}.csv", "prices")
+
+    # Soft validation: prices for modeled areas (validation data, not model inputs)
+    for area in areas:
+        prices_path = year_dir / f"prices_{area}.csv"
+        if not prices_path.exists():
+            logger.warning(f"prices_{area}.csv missing (validation data, not critical)")
+        else:
+            df = pd.read_csv(prices_path)
+            if len(df) != n_expected:
+                logger.warning(f"prices_{area}.csv: {len(df)} rows, expected {n_expected}")
+
+    # Soft validation: installed capacity (no row-count check, not a time series)
+    for area in areas:
+        ic_path = year_dir / f"installed_capacity_{area}.csv"
+        if not ic_path.exists():
+            logger.warning(f"installed_capacity_{area}.csv missing (not critical)")
 
     return len(issues) == 0, issues
-
-

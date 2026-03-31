@@ -20,7 +20,7 @@ Called from:
 Functions:
     fetch_demand(start, end)
         Fetch half-hourly GB demand from /demand/outturn, resample to
-        hourly naive UTC. Returns a Series (MW).
+        hourly naive UTC. Returns a Series (GW).
         Called from main_collect.collect_demand.
 
     fetch_generation(start, end)
@@ -29,10 +29,6 @@ Functions:
         (consumption, negative). Returns a DataFrame with 'hour' column
         (naive UTC) and one column per production.
         Called from main_collect.collect_production, fetch_generation_for_prodtype.
-
-    fetch_generation_for_prodtype(start, end, prodtype)
-        Convenience wrapper: fetch_generation then extract a single production type.
-        Not currently called internally (available for ad-hoc use).
 
     fetch_day_ahead_prices(start, end, gbp_to_eur=1.18)
         Fetch GB day-ahead prices (N2EX/APX), convert GBP to EUR.
@@ -137,7 +133,7 @@ def _to_hourly_utc(df, value_col="value"):
 
 
 def fetch_demand(start, end):
-    """Fetch actual total load for GB from Elexon, in MW.
+    """Fetch actual total load for GB from Elexon, in GW.
 
     Uses the /demand/outturn endpoint (INDO/ITSDO datasets) which provides
     half-hourly demand outturn by settlement date and period.
@@ -147,7 +143,7 @@ def fetch_demand(start, end):
         end: End datetime (pd.Timestamp or datetime).
 
     Returns:
-        pd.Series indexed by hourly UTC timestamps, values in MW.
+        pd.Series indexed by hourly UTC timestamps, values in GW.
     """
     records = []
 
@@ -177,14 +173,14 @@ def fetch_demand(start, end):
 
     df = pd.DataFrame(records)
     series = _to_hourly_utc(df)
-    return series
+    return series / 1000  # MW -> GW
 
 
 # ── Generation by production type ─────────────────────────────────────────────────
 
 
 def fetch_generation(start, end):
-    """Fetch actual generation by production type for GB from Elexon, in MW.
+    """Fetch actual generation by production type for GB from Elexon, in GW.
 
     PHS is split into 'phs' (generation, positive) and 'phs_in'
     (consumption, negative). All other production types appear as individual columns.
@@ -195,7 +191,7 @@ def fetch_generation(start, end):
 
     Returns:
         pd.DataFrame with 'hour' column (naive UTC) and one column per
-        production type. Values in MW. Returns None if no data.
+        production type. Values in GW. Returns None if no data.
     """
 
     records = []
@@ -246,26 +242,12 @@ def fetch_generation(start, end):
         result["phs"] = 0.0
         result["phs_in"] = 0.0
 
+    # Convert all numeric production columns from MW to GW
+    num_cols = result.select_dtypes(include=["float"]).columns.tolist()
+    result[num_cols] = result[num_cols] / 1000
+
     result.index.name = "hour"
     return result.reset_index()
-
-
-def fetch_generation_for_prodtype(start, end, prodtype):
-    """Fetch generation for a single production type for GB, in MW.
-
-    Convenience wrapper around fetch_generation() for single-type lookups.
-    Not called internally — available for ad-hoc analysis.
-
-    Args:
-        prodtype: One of our internal production type names (e.g. "onshore", "solar", "nuclear").
-
-    Returns:
-        pd.Series indexed by hourly UTC timestamps, values in MW.
-    """
-    gen = fetch_generation(start, end)
-    if gen is None or prodtype not in gen.columns:
-        return pd.Series(dtype=float)
-    return gen.set_index("hour")[prodtype]
 
 
 # ── Day-ahead prices ────────────────────────────────────────────────────────
@@ -339,7 +321,7 @@ def fetch_day_ahead_prices(start, end, gbp_to_eur=1.18):
 
 
 def fetch_installed_capacity(year):
-    """Fetch installed generation capacity per production type for GB, in MW.
+    """Fetch installed generation capacity per production type for GB, in GW.
 
     Uses the /datasets/IGCPU endpoint (B1420 — Installed Generation Capacity
     Per Unit) and sums by PSR type.
@@ -348,7 +330,7 @@ def fetch_installed_capacity(year):
         year: Calendar year (int).
 
     Returns:
-        dict {prodtype: mw} using our internal production type names, or None on failure.
+        dict {prodtype: gw} using our internal production type names, or None on failure.
     """
     data = _fetch_json(
         "/datasets/IGCPU",
@@ -369,6 +351,6 @@ def fetch_installed_capacity(year):
             continue
         mw = rec.get("installedCapacity") or 0
         if mw > 0:
-            capa_by_prodtype[our_name] = capa_by_prodtype.get(our_name, 0) + mw
+            capa_by_prodtype[our_name] = capa_by_prodtype.get(our_name, 0) + mw / 1000  # MW -> GW
 
     return capa_by_prodtype if capa_by_prodtype else None

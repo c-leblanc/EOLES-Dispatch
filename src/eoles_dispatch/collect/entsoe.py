@@ -26,7 +26,7 @@ Functions:
         Called from main_collect.collect_demand.
 
     fetch_demand(client, area, start, end)
-        Download actual load, return as hourly naive UTC Series (MW).
+        Download actual load, return as hourly naive UTC Series (GW).
         Called from main_collect.collect_demand.
 
     fetch_day_ahead_prices(client, area, start, end)
@@ -117,13 +117,11 @@ def set_client():
     return client
 
 
-
-
 # ── Demand ──
 
 
 def fetch_demand(client, area, start, end):
-    """Fetch hourly actual load from ENTSO-E for a single area, in MW.
+    """Fetch hourly actual load from ENTSO-E for a single area, in GW.
 
     Handles tz conversion (naive UTC → CET for entsoe-py) and resampling
     to hourly naive UTC. For DE, splits at the Oct 2018 zone transition.
@@ -135,7 +133,7 @@ def fetch_demand(client, area, start, end):
         start, end: Period bounds (naive UTC from cet_year_bounds).
 
     Returns:
-        pd.Series indexed by hourly naive UTC timestamps, values in MW.
+        pd.Series indexed by hourly naive UTC timestamps, values in GW.
         Returns None if the download fails or returns empty data.
     """
     periods = _resolve_area(area, start, end)
@@ -149,7 +147,9 @@ def fetch_demand(client, area, start, end):
             parts.append(resample_to_hourly(raw))
     if not parts:
         return None
-    return pd.concat(parts).sort_index()
+    result = pd.concat(parts).sort_index()
+    result = result / 1000  # MW -> GW
+    return result
 
 
 # ── Day-ahead prices ──
@@ -193,7 +193,7 @@ PRODUCTION_TYPES = [k for k in RAW_TO_AGG if k not in ("phs", "phs_in")]
 
 
 def fetch_generation(client, area, start, end):
-    """Fetch hourly generation by production type from ENTSO-E.
+    """Fetch hourly generation by production type from ENTSO-E in GW.
 
     Downloads all PSR types at once and extracts per-type production.
     PHS is split into 'phs' (generation, positive) and 'phs_in'
@@ -214,7 +214,9 @@ def fetch_generation(client, area, start, end):
     raw_parts = []
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
-        part = _call_with_retry(client.query_generation, code, start=api_start, end=api_end, psr_type=None)
+        part = _call_with_retry(
+            client.query_generation, code, start=api_start, end=api_end, psr_type=None
+        )
         if isinstance(part, pd.DataFrame) and not part.empty:
             raw_parts.append(part)
     if not raw_parts:
@@ -256,14 +258,18 @@ def fetch_generation(client, area, start, end):
 
     df = pd.DataFrame(result)
     df.index.name = "hour"
-    return df.reset_index()
+    df = df.reset_index()
+    # Convert all numeric production columns from MW to GW
+    num_cols = df.select_dtypes(include=["float"]).columns.tolist()
+    df[num_cols] = df[num_cols] / 1000
+    return df
 
 
 # ── Installed generation capacity ──
 
 
 def fetch_installed_capacity(client, area, year):
-    """Fetch installed generation capacity per production type for a year, in MW.
+    """Fetch installed generation capacity per production type for a year, in GW.
 
     Uses query_installed_generation_capacity (ENTSO-E 14.1.A) which returns
     a DataFrame with PSR-type columns and yearly/monthly snapshots as rows.
@@ -275,7 +281,7 @@ def fetch_installed_capacity(client, area, year):
         year: Calendar year (int).
 
     Returns:
-        dict {prodtype: mw} using our internal production type names, or None on failure.
+        dict {prodtype: gw} using our internal production type names, or None on failure.
     """
     start = pd.Timestamp(year=year, month=1, day=1)
     end = pd.Timestamp(year=year, month=12, day=31)
@@ -284,7 +290,9 @@ def fetch_installed_capacity(client, area, year):
     for code, p_start, p_end in periods:
         api_start, api_end = _to_api_timestamps(p_start, p_end)
         try:
-            raw = _call_with_retry(client.query_installed_generation_capacity, code, start=api_start, end=api_end)
+            raw = _call_with_retry(
+                client.query_installed_generation_capacity, code, start=api_start, end=api_end
+            )
         except Exception as e:
             logger.warning("Installed capacity unavailable for %s: %s", area, e)
             return None
@@ -300,48 +308,54 @@ def fetch_installed_capacity(client, area, year):
         if cols:
             val = snapshot[cols].sum()
             if val > 0:
-                result[prodtype] = val
+                result[prodtype] = val / 1000  # MW -> GW
     return result if result else None
 
 
 # ── Constants and Helpers ──
 
 
-def is_usable(series, start, end):
+def is_usable(series, n_expected):
     """Check whether an ENTSO-E series has sufficient coverage.
 
     Returns True if the series is non-empty and covers at least
-    _ENTSOE_MIN_COVERAGE of the expected hourly range.
+    ENTSOE_MIN_COVERAGE of the expected hourly count.
+
+    Args:
+        series: pd.Series, pd.DataFrame, or None.
+        n_expected: Expected number of hourly data points (from
+            utils.expected_hours(year)).
     """
     if series is None or (hasattr(series, "__len__") and len(series) == 0):
         return False
     if isinstance(series, pd.Series) and series.isna().all():
         return False
-    expected_hours = (end - start).total_seconds() / 3600
-    if expected_hours <= 0:
+    if n_expected <= 0:
         return False
     valid_count = series.notna().sum() if isinstance(series, pd.Series) else len(series)
-    return (valid_count / expected_hours) >= ENTSOE_MIN_COVERAGE
+    return (valid_count / n_expected) >= ENTSOE_MIN_COVERAGE
 
 
 # ── Retry on transient failure
 
-_MAX_ATTEMPTS = 5
-_RETRY_DELAYS = [5, 10, 30, 60, 120, 300]  # seconds before each attempt
+_MAX_RETRIES = 5
+_RETRY_DELAYS = [5, 10, 30, 60, 120, 300]  # seconds between consecutive calls
+
 
 def _call_with_retry(fn, *args, **kwargs):
     """Call an ENTSO-E API function, retrying on transient errors.
 
-    Prints inline attempt updates so the caller's status line stays on one line.
-    Only retries on transient errors (5xx, connection/timeout). Other exceptions
+    A rate-limiting delay is applied before each call (including the first)
+    to avoid overwhelming the ENTSO-E API. On transient errors (5xx,
+    connection/timeout), retries with increasing delays. Other exceptions
     are re-raised immediately.
     """
     last_exc = None
-    for attempt in range(0, _MAX_ATTEMPTS):
+    for attempt in range(_MAX_RETRIES + 1):
         delay = _RETRY_DELAYS[attempt]
-        if attempt > 1:
+        if attempt > 0:
             print(
-                f"{_error_label(last_exc)} -> Attempt {attempt}/{_MAX_ATTEMPTS}... ",
+                f"{_error_label(last_exc)} -> Retry {attempt}/{_MAX_RETRIES}... ",
                 end="",
                 flush=True,
             )
@@ -356,11 +370,13 @@ def _call_with_retry(fn, *args, **kwargs):
                 raise
     raise last_exc
 
+
 def _error_label(e):
     """Short label for display, e.g. 'Error 503' or 'ConnectionError'."""
     if hasattr(e, "response") and e.response is not None:
         return f"Error {e.response.status_code}"
     return type(e).__name__
+
 
 def _is_transient(e):
     """Return True for errors worth retrying (server-side or network)."""
@@ -371,6 +387,7 @@ def _is_transient(e):
 
 
 # ── ENTSO-E API conventions and conversion
+
 
 def _to_api_timestamps(start, end):
     """Convert naive UTC timestamps to tz-aware CET for entsoe-py.
@@ -437,12 +454,12 @@ def col_matches(col, prodtype):
     return False
 
 
-
 # ── Coping with moving areas
 
 # Germany switched from DE_AT_LU to DE_LU bidding zone on 1 October 2018.
 # Naive UTC equivalent: 2018-09-30 22:00 (Oct 1 00:00 CET = UTC+2 in CEST).
 _DE_TRANSITION = pd.Timestamp("2018-09-30 22:00:00")
+
 
 def _resolve_area(area, start, end):
     """Return [(entsoe_code, period_start, period_end), ...] for an area.
@@ -482,4 +499,3 @@ def _resolve_area_price(area, start, end):
         code = AREA_CODES_PRICE[area]
         return [(code, pd.Timestamp(start), pd.Timestamp(end))]
     return _resolve_area(area, start, end)
-
