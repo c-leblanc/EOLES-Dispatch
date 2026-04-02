@@ -352,7 +352,7 @@ def _copy_actual_prices(data_dir, run_dir, year, areas, months):
         src = data_dir / str(year) / f"prices_{area}.csv"
         if not src.exists():
             continue
-    
+
         df = pd.read_csv(src, parse_dates=["hour"])
         df = df[(df["hour"] >= start) & (df["hour"] < end)].copy()
         if df.empty:
@@ -450,6 +450,7 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
     validation_dir = run_dir / "validation"
     validation_dir.mkdir(exist_ok=True)
     combined.to_csv(validation_dir / "actual_production.csv", index=False)
+
 
 # TODO : Detail and tailor to the list of areas necessary for simulation
 def _ensure_data_available(data_dir, year, areas, exo_areas):

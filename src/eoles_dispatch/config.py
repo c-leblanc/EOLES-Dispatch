@@ -210,6 +210,3 @@ MODEL_TO_AGG = {
 
 # NMD production types, derived from RAW_TO_AGG (single source of truth).
 NMD_TYPES = [k for k, v in RAW_TO_AGG.items() if v == "nmd"]
-
-
-

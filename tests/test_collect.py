@@ -215,34 +215,34 @@ def _make_gapped_series(gap_start, gap_length, total=48):
     return pd.Series(values, index=idx)
 
 
-def test_interpolate_small_gap_linear():
+def test_interpolate_small_gap_linear(tmp_path):
     s = _make_gapped_series(gap_start=10, gap_length=2, total=48)
-    report = Report()
+    report = Report(tmp_path)
     result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     assert result.iloc[10] == pytest.approx(11.0, abs=0.5)
     assert result.iloc[11] == pytest.approx(12.0, abs=0.5)
     assert filled == 2
 
 
-def test_interpolate_no_gaps_passthrough():
+def test_interpolate_no_gaps_passthrough(tmp_path):
     idx = pd.date_range("2023-06-01", periods=24, freq="h")
     s = pd.Series(np.ones(24), index=idx)
-    report = Report()
+    report = Report(tmp_path)
     result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     pd.testing.assert_series_equal(result, s)
     assert filled == 0
 
 
-def test_interpolate_preserves_index():
+def test_interpolate_preserves_index(tmp_path):
     s = _make_gapped_series(gap_start=5, gap_length=2, total=48)
-    report = Report()
+    report = Report(tmp_path)
     result, _ = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     pd.testing.assert_index_equal(result.index, s.index)
 
 
-def test_interpolate_fills_all_nans():
+def test_interpolate_fills_all_nans(tmp_path):
     s = _make_gapped_series(gap_start=20, gap_length=2, total=48)
-    report = Report()
+    report = Report(tmp_path)
     result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
     assert result.isna().sum() == 0
     assert filled > 0
@@ -276,10 +276,10 @@ def test_production_usable_none():
 
 def test_report_load_existing(tmp_path):
     """Report.load should restore entries from a previously saved CSV."""
-    report = Report()
+    report = Report(tmp_path)
     report.add("demand", "FR", pd.Timestamp("2023-01-01"), 3, "linear_interpolation")
     report.add("production", "DE", pd.Timestamp("2023-06-15"), 12, "weekly_analogue_next")
-    report.save(tmp_path)
+    report.save()
 
     loaded = Report.load(tmp_path / "_gap_fill_report.csv")
     assert len(loaded.entries) == 2

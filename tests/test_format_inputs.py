@@ -340,20 +340,19 @@ def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True)
 
     for area in areas:
         pd.DataFrame({"hour": hours, "demand": [1.0] * n}).to_csv(
-        tmp_path / f"demand_{area}.csv", index=False
+            tmp_path / f"demand_{area}.csv", index=False
         )
-        pd.DataFrame({"hour": hours, **{f: [.1] * n for f in production_types}}).to_csv(
+        pd.DataFrame({"hour": hours, **{f: [0.1] * n for f in production_types}}).to_csv(
             tmp_path / f"production_{area}.csv", index=False
         )
         if include_actual_prices:
             pd.DataFrame({"hour": hours, "price": [55.0] * n}).to_csv(
                 tmp_path / f"prices_{area}.csv", index=False
-            )  
+            )
     for area in exo_areas:
         pd.DataFrame({"hour": hours, "price": [50.0] * n}).to_csv(
             tmp_path / f"prices_{area}.csv", index=False
         )
-
 
 
 class TestValidateYear:

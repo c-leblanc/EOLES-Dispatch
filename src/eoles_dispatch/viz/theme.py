@@ -28,7 +28,7 @@ TEC_COLORS = {
     "lake_phs": "#6497b1",
     "battery": "#ffa500",
     "nmd": "#262626",
-    "net_imports": "#adb5bd"
+    "net_imports": "#adb5bd",
 }
 
 # Display labels for technologies.
@@ -86,9 +86,9 @@ AGG_NEGATIVE = {"Net exports", "Lake/PHS (charge)", "Battery (charge)"}
 
 # Order for stacked area (bottom to top) — positive generation
 AGG_ORDER = [
-    "Net exports", #negative
-    "Lake/PHS (charge)", #negative
-    "Battery (charge)", #negative
+    "Net exports",  # negative
+    "Lake/PHS (charge)",  # negative
+    "Battery (charge)",  # negative
     "Nuclear",
     "Gas",
     "Coal",

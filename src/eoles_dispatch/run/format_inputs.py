@@ -48,25 +48,26 @@ def load_tv_inputs(
     valid_hours = set(hour_month["hour"])
 
     # 1. Load raw data and filter to the simulation period
-    production_raw = load_year_timeseries(label="production", data_dir=data_dir, year=simul_year, areas=areas)
+    production_raw = load_year_timeseries(
+        label="production", data_dir=data_dir, year=simul_year, areas=areas
+    )
     production = {area: _filter_to_posix(df, valid_hours) for area, df in production_raw.items()}
 
-    demand_raw = load_year_timeseries(label="demand",data_dir=data_dir, year=simul_year, areas=areas)
-    demand = {area: _filter_to_posix(df, valid_hours) for area, df in demand_raw.items()}
-    demand = pd.concat(
-        [df.assign(area=area) for area, df in demand.items()],
-        ignore_index=True
+    demand_raw = load_year_timeseries(
+        label="demand", data_dir=data_dir, year=simul_year, areas=areas
     )
+    demand = {area: _filter_to_posix(df, valid_hours) for area, df in demand_raw.items()}
+    demand = pd.concat([df.assign(area=area) for area, df in demand.items()], ignore_index=True)
     demand = demand[["area", "hour", "demand"]]
 
-    exo_prices_raw = load_year_timeseries(label="prices",data_dir=data_dir,year=simul_year,areas=exo_areas)
+    exo_prices_raw = load_year_timeseries(
+        label="prices", data_dir=data_dir, year=simul_year, areas=exo_areas
+    )
     exo_prices = {area: _filter_to_posix(df, valid_hours) for area, df in exo_prices_raw.items()}
     exo_prices = pd.concat(
-        [df.assign(area=area) for area, df in exo_prices.items()],
-        ignore_index=True
+        [df.assign(area=area) for area, df in exo_prices.items()], ignore_index=True
     )
     exo_prices = exo_prices[["area", "hour", "prices"]]
-
 
     # Load installed capacity (1 file per area, tec index, GW)
     installed_capa = {}
@@ -209,7 +210,6 @@ def load_year_timeseries(label, data_dir, year, areas):
         result[area] = df
 
     return result
-
 
 
 def load_ninja_var(data_dir, variable, areas, valid_hours):

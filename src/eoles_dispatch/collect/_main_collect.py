@@ -217,8 +217,9 @@ def collect_history(
     if exo_areas is None:
         exo_areas = list(DEFAULT_EXO_AREAS)
 
-    existing_report = output_dir / "_gap_fill_report.csv"
-    gap_report = Report.load(existing_report) if existing_report.exists() else Report()
+    gap_report = Report.load(output_dir / "_gap_fill_report.csv") if (
+        output_dir / "_gap_fill_report.csv"
+    ).exists() else Report(output_dir)
     start, end = cet_year_bounds(year)
     canon_idx = canonical_index(year)
     n_exp = expected_hours(year)
@@ -294,7 +295,7 @@ def collect_history(
             df.to_csv(path, index=False)
             logger.info(f"  → installed_capacity_{area}.csv ({len(df)} technologies)")
 
-    gap_report.save(output_dir)
+    gap_report.save()
 
 
 # ── Time series collection helper ──
@@ -406,9 +407,12 @@ def _collect_timeseries(
         if data is None or (hasattr(data, "__len__") and len(data) == 0):
             print("no data available (KO)")
             continue
+        if not usable_fn(data):
+            print("insufficient data (KO)")
+            continue
 
-        print("OK", end="", flush=True)  # TODO : Vérifier que il dit OK que quand vraiment OK
-
+        print("OK", end="", flush=True) 
+        
         # Reindex onto canonical index and gap-fill
         gaps_filled = 0
         if isinstance(data, pd.DataFrame):

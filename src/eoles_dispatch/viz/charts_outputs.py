@@ -796,13 +796,13 @@ def chart_energy_mix_monthly_validate(run_dir, areas):
     )
     for row, area in enumerate(area_list, 1):
         sub_sim = agg_data[agg_data["area"] == area]
-        monthly_sim = sub_sim.groupby("month")[tec_display_cols].sum() / 1000 # TWh
+        monthly_sim = sub_sim.groupby("month")[tec_display_cols].sum() / 1000  # TWh
 
         sub_act = (
             agg_actual[agg_actual["area"] == area] if area in agg_actual["area"].values else None
         )
         monthly_act = (
-            sub_act.groupby("month")[tec_display_cols_act].sum() / 1000 # TWh
+            sub_act.groupby("month")[tec_display_cols_act].sum() / 1000  # TWh
             if sub_act is not None and not sub_act.empty
             else None
         )
@@ -974,6 +974,7 @@ def chart_production(run_dir, areas):
 
 
 # ── Energy mix helpers ──
+
 
 def _build_energy_agg(df, areas):
     """Return (area_list, agg_data) for energy mix charts.

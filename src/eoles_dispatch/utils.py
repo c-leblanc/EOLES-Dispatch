@@ -88,6 +88,7 @@ def resample_to_hourly(series):
 
     return series
 
+
 # CET bounds
 
 
@@ -201,7 +202,11 @@ def cet_period_bounds(year, months=None):
         return cet_year_bounds(year)
     start_m, end_m = months
     start = cet_to_utc(datetime(year, start_m, 1))
-    end = cet_to_utc(datetime(year, end_m + 1, 1)) if end_m < 12 else cet_to_utc(datetime(year + 1, 1, 1))
+    end = (
+        cet_to_utc(datetime(year, end_m + 1, 1))
+        if end_m < 12
+        else cet_to_utc(datetime(year + 1, 1, 1))
+    )
     return start, end
 
 
