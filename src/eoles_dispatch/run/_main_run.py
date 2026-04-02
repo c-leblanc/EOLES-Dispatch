@@ -19,7 +19,7 @@ from pathlib import Path
 
 import yaml
 
-from ..collect._main_collect import collect_all
+from ..collect._main_collect import collect_all, sanitize_year
 from ..config import DEFAULT_AREAS, DEFAULT_EXO_AREAS
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ def create_run(
 
     # Auto-download data if needed
     if auto_download:
-        _ensure_data_available(data_dir, year, areas, exo_areas)
+        _ensure_data_available(data_dir, year, areas, exo_areas, actCF=actCF, rn_horizon=rn_horizon)
 
     # Create run directory
     run_dir.mkdir(parents=True)
@@ -452,46 +452,105 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
     combined.to_csv(validation_dir / "actual_production.csv", index=False)
 
 
-# TODO : Detail and tailor to the list of areas necessary for simulation
-def _ensure_data_available(data_dir, year, areas, exo_areas):
+def check_requirements(data_dir, year, areas, exo_areas, actCF=False, rn_horizon="current"):
+    """Check if all files needed for a run are present.
+
+    Pure query — no filesystem mutations. A file renamed to *_corrupt
+    by sanitize_year() counts as missing (its clean name no longer exists).
+
+    Args:
+        data_dir: Root data directory.
+        year: Simulation year.
+        areas: Modeled area codes.
+        exo_areas: Non-modeled area codes (for prices).
+        actCF: If True, ninja files are not required.
+        rn_horizon: "current" or "future" (determines which ninja files).
+
+    Returns:
+        (source, missing_files) tuple.
+        source is None if everything is present, otherwise "entsoe", "ninja",
+        or "all" indicating what needs to be collected.
+        missing_files lists the missing filenames for diagnostics.
+    """
+    year_dir = data_dir / str(year)
+    ninja_dir = data_dir / "renewable_ninja"
+
+    # History files (ENTSO-E)
+    history_missing = []
+    for area in areas:
+        for label in ("demand", "production", "installed_capacity"):
+            path = year_dir / f"{label}_{area}.csv"
+            if not path.exists():
+                history_missing.append(path.name)
+    for area in exo_areas:
+        path = year_dir / f"prices_{area}.csv"
+        if not path.exists():
+            history_missing.append(path.name)
+
+    # Ninja files (only if actCF=False)
+    ninja_missing = []
+    if not actCF:
+        for name in ("solar", f"offshore_{rn_horizon}", f"onshore_{rn_horizon}"):
+            path = ninja_dir / f"{name}.csv"
+            if not path.exists():
+                ninja_missing.append(path.name)
+
+    # Determine source
+    needs_entsoe = bool(history_missing)
+    needs_ninja = bool(ninja_missing)
+
+    if needs_entsoe and needs_ninja:
+        source = "all"
+    elif needs_entsoe:
+        source = "entsoe"
+    elif needs_ninja:
+        source = "ninja"
+    else:
+        source = None
+
+    return source, history_missing + ninja_missing
+
+
+def _ensure_data_available(data_dir, year, areas, exo_areas, actCF=False, rn_horizon="current"):
     """Check if data for the given year is available, download if not.
 
-    Checks for year-based directory structure: data/<year>/.
-    If the year directory is missing, triggers a collect.
-    If marked as corrupt (data/<year>_corrupt), raises an error.
+    Runs sanitize_year on existing data to flag corrupt files, then
+    checks if all required files are present via check_requirements.
+    If not, triggers collection for the missing sources only, then
+    re-verifies.
+
+    Args:
+        data_dir: Root data directory.
+        year: Simulation year.
+        areas: Modeled area codes.
+        exo_areas: Non-modeled area codes (for prices).
+        actCF: If True, ninja files are not required.
+        rn_horizon: "current" or "future" (determines which ninja files).
     """
-
-    # Check history data
     year_dir = data_dir / str(year)
-    history_missing = not year_dir.exists()
 
-    # Check Renewables.ninja data
-    ninja_dir = data_dir / "renewable_ninja"
-    ninja_files = [
-        "solar.csv",
-        "onshore_current.csv",
-        "onshore_future.csv",
-        "offshore_current.csv",
-        "offshore_future.csv",
-    ]
-    ninja_missing = not ninja_dir.exists() or not all((ninja_dir / f).exists() for f in ninja_files)
+    # Sanitize existing files (flag corrupt ones)
+    if year_dir.exists():
+        sanitize_year(year_dir, year)
 
-    if history_missing or ninja_missing:
-        logger.info("Some necessary data is missing, launching data collection...")
-        collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source="all")
-        # Verify history data download succeeded
-        if not year_dir.exists():
-            if (data_dir / f"{year}_corrupt").exists():
-                raise RuntimeError(
-                    f"Data collection for {year} failed validation. "
-                    f"Check {data_dir / f'{year}_corrupt'} for details."
-                )
-            raise RuntimeError(f"Data collection for {year} did not produce {year_dir}.")
-        # Verify ninja data download succeeded
-        still_missing = [f for f in ninja_files if not (ninja_dir / f).exists()]
-        if still_missing:
-            raise RuntimeError(
-                f"Failed to download Renewables.ninja data. "
-                f"Missing files: {still_missing}. "
-                f"Check your internet connection, or provide the data manually in {ninja_dir}/"
-            )
+    # Check what's missing
+    source, missing_files = check_requirements(
+        data_dir, year, areas, exo_areas, actCF=actCF, rn_horizon=rn_horizon
+    )
+
+    if source is None:
+        return
+
+    logger.info(f"Missing data: {missing_files}. Launching collection (source={source})...")
+    collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source=source)
+
+    # Re-verify
+    still_source, still_missing = check_requirements(
+        data_dir, year, areas, exo_areas, actCF=actCF, rn_horizon=rn_horizon
+    )
+    if still_source is not None:
+        raise RuntimeError(
+            f"Data collection for {year} incomplete after download. "
+            f"Still missing: {still_missing}. "
+            f"Check logs for download errors or provide data manually in {data_dir}/"
+        )

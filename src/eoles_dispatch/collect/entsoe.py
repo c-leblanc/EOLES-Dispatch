@@ -70,13 +70,12 @@ logger = logging.getLogger(__name__)
 
 
 def set_client():
-    """Check that the ENTSO-E API key is set and looks valid and set the client
+    """Check that the ENTSO-E API key is set and valid, then return the client.
 
-    Performs a lightweight test query (FR load for 1 hour) to catch invalid keys
-    early, before starting a long collection run.
-
-    Raises EnvironmentError if the key is missing, or RuntimeError if the test
-    query fails (wrong key, network issue, etc.).
+    Performs a lightweight test query (FR load for 1 hour) to catch problems
+    early. Distinguishes two failure modes:
+    - 401/403 → EnvironmentError (bad key, abort immediately).
+    - network/5xx → retried via _call_with_retry, then RuntimeError on exhaustion.
     """
     print("Validating ENTSO-E API key...", end="", flush=True)
 
@@ -100,20 +99,24 @@ def set_client():
     client = EntsoePandasClient(api_key=ENTSOE_API_KEY)
 
     # Quick smoke test: query 1 hour of FR load
+    test_start = pd.Timestamp("2023-01-01", tz="Europe/Brussels")
+    test_end = pd.Timestamp("2023-01-01T01:00:00", tz="Europe/Brussels")
     try:
-        test_start = pd.Timestamp("2023-01-01", tz="Europe/Brussels")
-        test_end = pd.Timestamp("2023-01-01T01:00:00", tz="Europe/Brussels")
-        result = client.query_load("FR", start=test_start, end=test_end)
-        if result is None or (hasattr(result, "__len__") and len(result) == 0):
-            raise RuntimeError("Failed: ENTSO-E returned empty data for the test query")
+        result = _call_with_retry(client.query_load, "FR", start=test_start, end=test_end)
     except Exception as e:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status in (401, 403):
+            raise EnvironmentError(
+                "ENTSO-E API key rejected (HTTP %d). Check your ENTSOE_API_KEY." % status
+            ) from e
         raise RuntimeError(
-            f"Failed: {e}\n"
-            "Check that your ENTSOE_API_KEY is correct and that "
-            "https://transparency.entsoe.eu/ is reachable."
+            "ENTSO-E unreachable after retries. Check your network or try again later."
         ) from e
 
-    logger.info("OK")
+    if result is None or (hasattr(result, "__len__") and len(result) == 0):
+        raise RuntimeError("ENTSO-E returned empty data for the test query.")
+
+    print("OK")
     return client
 
 

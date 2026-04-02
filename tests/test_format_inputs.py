@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eoles_dispatch.collect._main_collect import _validate_year
-from eoles_dispatch.run._main_run import _copy_actual_prices
+from eoles_dispatch.collect._main_collect import sanitize_year
+from eoles_dispatch.run._main_run import _copy_actual_prices, check_requirements
 from eoles_dispatch.run.compute import (
     compute_hydro_limits,
     compute_lake_inflows,
@@ -328,12 +328,12 @@ class TestHourMonthCetMapping:
 
 
 # ---------------------------------------------------------------------------
-# _validate_year (collect._main_collect)
+# sanitize_year (collect._main_collect)
 # ---------------------------------------------------------------------------
 
 
 def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True):
-    """Create a minimal valid year directory for _validate_year tests."""
+    """Create a minimal valid year directory for sanitize/check_requirements tests."""
     n = expected_hours(year)
     hours = list(range(n))
     production_types = ["biomass", "gas", "nuclear", "solar", "onshore"]
@@ -345,6 +345,9 @@ def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True)
         pd.DataFrame({"hour": hours, **{f: [0.1] * n for f in production_types}}).to_csv(
             tmp_path / f"production_{area}.csv", index=False
         )
+        pd.DataFrame([{"tec": "gas", "value": 5.0}]).to_csv(
+            tmp_path / f"installed_capacity_{area}.csv", index=False
+        )
         if include_actual_prices:
             pd.DataFrame({"hour": hours, "price": [55.0] * n}).to_csv(
                 tmp_path / f"prices_{area}.csv", index=False
@@ -355,60 +358,164 @@ def _make_year_dir(tmp_path, year, areas, exo_areas, include_actual_prices=True)
         )
 
 
-class TestValidateYear:
-    def test_valid_year_passes(self, tmp_path):
-        """A complete, correctly-sized year directory passes validation."""
+class TestSanitizeYear:
+    def test_valid_files_no_issues(self, tmp_path):
+        """A directory with correct files returns no issues."""
         areas, exo_areas = ["FR"], ["CH"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert is_valid
+        issues = sanitize_year(tmp_path, 2021)
         assert issues == []
 
-    def test_missing_demand_fails(self, tmp_path):
-        areas, exo_areas = ["FR"], ["CH"]
-        _make_year_dir(tmp_path, 2021, areas, exo_areas)
-        (tmp_path / "demand_FR.csv").unlink()
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert not is_valid
-        assert any("demand_FR.csv" in i for i in issues)
-
-    def test_missing_actual_prices_does_not_fail(self, tmp_path):
-        """actual_prices.csv is soft validation: missing should not block."""
-        areas, exo_areas = ["FR"], ["CH"]
-        _make_year_dir(tmp_path, 2021, areas, exo_areas, include_actual_prices=False)
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert is_valid
-        assert issues == []
-
-    def test_missing_production_file_fails(self, tmp_path):
-        areas, exo_areas = ["FR", "BE"], ["CH"]
-        _make_year_dir(tmp_path, 2021, areas, exo_areas)
-        (tmp_path / "production_BE.csv").unlink()
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert not is_valid
-        assert any("production_BE.csv" in i for i in issues)
-
-    def test_wrong_row_count_fails(self, tmp_path):
-        """A demand.csv with incorrect row count is flagged."""
+    def test_wrong_row_count_renames_to_corrupt(self, tmp_path):
+        """A timeseries file with wrong row count is renamed to *_corrupt."""
         areas, exo_areas = ["FR"], ["CH"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
         n_wrong = expected_hours(2021) - 10
-        pd.DataFrame({"hour": list(range(n_wrong)), "FR": [1.0] * n_wrong}).to_csv(
+        pd.DataFrame({"hour": list(range(n_wrong)), "demand": [1.0] * n_wrong}).to_csv(
             tmp_path / "demand_FR.csv", index=False
         )
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert not is_valid
+        issues = sanitize_year(tmp_path, 2021)
         assert any("demand_FR.csv" in i for i in issues)
+        assert not (tmp_path / "demand_FR.csv").exists()
+        assert (tmp_path / "demand_FR_corrupt.csv").exists()
 
-    def test_missing_exo_area_in_prices_fails(self, tmp_path):
-        """exo_prices.csv missing an exo area column is flagged."""
-        areas, exo_areas = ["FR"], ["CH", "NO"]
+    def test_nan_values_renames_to_corrupt(self, tmp_path):
+        """A timeseries file with NaN values is renamed to *_corrupt."""
+        areas, exo_areas = ["FR"], ["CH"]
         _make_year_dir(tmp_path, 2021, areas, exo_areas)
-        # Overwrite exo_prices.csv with only one of the two exo areas
-        (tmp_path / "prices_NO.csv").unlink()
-        is_valid, issues = _validate_year(tmp_path, 2021, areas, exo_areas)
-        assert not is_valid
-        assert any("prices_NO.csv" in i for i in issues)
+        n = expected_hours(2021)
+        vals = [1.0] * n
+        vals[10] = float("nan")
+        pd.DataFrame({"hour": list(range(n)), "demand": vals}).to_csv(
+            tmp_path / "demand_FR.csv", index=False
+        )
+        issues = sanitize_year(tmp_path, 2021)
+        assert any("NaN" in i for i in issues)
+        assert (tmp_path / "demand_FR_corrupt.csv").exists()
+
+    def test_installed_capacity_not_checked_for_rows(self, tmp_path):
+        """installed_capacity files (no 'hour' column) are not row-count-checked."""
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        # installed_capacity has no 'hour' column, any row count is fine
+        issues = sanitize_year(tmp_path, 2021)
+        assert issues == []
+
+    def test_gap_fill_report_skipped(self, tmp_path):
+        """_gap_fill_report.csv is not validated."""
+        areas, exo_areas = ["FR"], ["CH"]
+        _make_year_dir(tmp_path, 2021, areas, exo_areas)
+        pd.DataFrame({"hour": [1], "x": [1]}).to_csv(tmp_path / "_gap_fill_report.csv", index=False)
+        issues = sanitize_year(tmp_path, 2021)
+        assert issues == []
+
+    def test_nonexistent_dir_returns_empty(self, tmp_path):
+        """sanitize_year on a non-existent directory returns empty issues."""
+        issues = sanitize_year(tmp_path / "does_not_exist", 2021)
+        assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# check_requirements (run._main_run)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckRequirements:
+    def test_all_present_returns_none(self, tmp_path):
+        """All files present → source is None."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        # Ninja files
+        ninja_dir = tmp_path / "renewable_ninja"
+        ninja_dir.mkdir()
+        for f in ("solar.csv", "offshore_current.csv", "onshore_current.csv"):
+            (ninja_dir / f).touch()
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source is None
+        assert missing == []
+
+    def test_missing_demand_needs_entsoe(self, tmp_path):
+        """Missing demand file → source is 'entsoe'."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        (year_dir / "demand_FR.csv").unlink()
+        # Ninja files present
+        ninja_dir = tmp_path / "renewable_ninja"
+        ninja_dir.mkdir()
+        for f in ("solar.csv", "offshore_current.csv", "onshore_current.csv"):
+            (ninja_dir / f).touch()
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source == "entsoe"
+        assert "demand_FR.csv" in missing
+
+    def test_missing_exo_prices_needs_entsoe(self, tmp_path):
+        """Missing exo prices → source is 'entsoe'."""
+        areas, exo_areas = ["FR"], ["CH", "NO"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        (year_dir / "prices_NO.csv").unlink()
+        ninja_dir = tmp_path / "renewable_ninja"
+        ninja_dir.mkdir()
+        for f in ("solar.csv", "offshore_current.csv", "onshore_current.csv"):
+            (ninja_dir / f).touch()
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source == "entsoe"
+        assert "prices_NO.csv" in missing
+
+    def test_missing_ninja_needs_ninja(self, tmp_path):
+        """Missing ninja files with history present → source is 'ninja'."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source == "ninja"
+        assert any("solar.csv" in m for m in missing)
+
+    def test_actCF_true_skips_ninja(self, tmp_path):
+        """With actCF=True, ninja files are not required."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas, actCF=True)
+        assert source is None
+        assert missing == []
+
+    def test_corrupt_file_counts_as_missing(self, tmp_path):
+        """A file renamed to *_corrupt by sanitize_year counts as missing."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        (year_dir / "demand_FR.csv").rename(year_dir / "demand_FR_corrupt.csv")
+        ninja_dir = tmp_path / "renewable_ninja"
+        ninja_dir.mkdir()
+        for f in ("solar.csv", "offshore_current.csv", "onshore_current.csv"):
+            (ninja_dir / f).touch()
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source == "entsoe"
+        assert "demand_FR.csv" in missing
+
+    def test_missing_installed_capacity_detected(self, tmp_path):
+        """Missing installed_capacity file is detected."""
+        areas, exo_areas = ["FR"], ["CH"]
+        year_dir = tmp_path / "2021"
+        year_dir.mkdir()
+        _make_year_dir(year_dir, 2021, areas, exo_areas)
+        (year_dir / "installed_capacity_FR.csv").unlink()
+        ninja_dir = tmp_path / "renewable_ninja"
+        ninja_dir.mkdir()
+        for f in ("solar.csv", "offshore_current.csv", "onshore_current.csv"):
+            (ninja_dir / f).touch()
+        source, missing = check_requirements(tmp_path, 2021, areas, exo_areas)
+        assert source == "entsoe"
+        assert "installed_capacity_FR.csv" in missing
 
 
 # ---------------------------------------------------------------------------

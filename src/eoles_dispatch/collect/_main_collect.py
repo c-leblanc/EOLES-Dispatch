@@ -1,7 +1,7 @@
 """Orchestrator for data collection from all sources.
 
 Coordinates downloads from ENTSO-E, Elexon BMRS, and Renewables.ninja,
-then validates and saves the results as CSV files organized by year.
+then sanitizes and saves the results as CSV files organized by year.
 This module does NOT contain source-specific logic (API calls, column
 parsing) — that lives in entsoe.py, elexon.py, and rninja.py.
 
@@ -20,7 +20,7 @@ Delegates to:
 
 Called from:
     - __main__.py       CLI entry point (eoles-dispatch collect).
-    - run.py            Auto-download when creating a run with missing data.
+    - run/_main_run.py  Auto-download when creating a run with missing data.
 
 Data structure:
     data/<year>/
@@ -37,14 +37,19 @@ Data structure:
 Functions:
     collect_all(output_dir, start_year, end_year, ...)
         Top-level orchestrator: loops over years, calls collect_history,
-        validates, and saves.
-        Called from __main__.py and run.py.
+        then sanitize_year. Called from __main__.py and run/_main_run.py.
 
     collect_history(output_dir, client, year, areas, exo_areas)
         Download all ENTSO-E data for a single year. Loops over demand,
         production, and prices via a config-driven call to _collect_timeseries,
-        then handles installed_capacity separately.
+        then handles installed_capacity separately. Skips areas that already
+        have files on disk.
         Called from collect_all.
+
+    sanitize_year(year_dir, year)
+        Check integrity of CSV files in a year directory. Renames corrupt
+        files to *_corrupt so they are re-downloaded on next collection.
+        Area-agnostic.
 
     collect_installed_capacity(client, areas, year)
         Download installed generation capacity (MW). Returns a dict of
@@ -58,7 +63,6 @@ Usage:
     eoles-dispatch collect --start 2020 --end 2024 --source ninja
     eoles-dispatch collect --start 2021 --end 2022 --force
 """
-# TODO : Séparer collecte pour simulation et collecte pour validation ?
 
 import logging
 import shutil
@@ -91,61 +95,33 @@ def collect_all(
     if source in ("all", "entsoe"):
         logger.info("=== STARTING DOWNLOADING HISTORY DATA ===")
         # Validate API key upfront (fail fast before starting a long run)
-        client = entsoe.set_client()
+        try:
+            client = entsoe.set_client()
+        except (EnvironmentError, RuntimeError) as e:
+            raise SystemExit(f"Error: {e}") from None
 
         for year in range(start_year, end_year):
             year_dir = output_dir / str(year)
-            corrupt_dir = output_dir / f"{year}_corrupt"
-            partial_dir = output_dir / f"{year}_partial"
 
-            # Skip if already valid (unless force) or clean up any previous partial/corrupt directories
-            if year_dir.exists() and force:
+            if force and year_dir.exists():
                 logger.info(f"Data for {year} present locally, force removing and redownloading...")
                 shutil.rmtree(year_dir)
-            elif year_dir.exists():
-                logger.info(
-                    f"Data for {year} already available locally, "
-                    f"skipping (use --force to re-download)"
-                )
-                continue
-            elif corrupt_dir.exists():
-                logger.info(
-                    f"Data for {year} present locally is corrupt: removing corrupt files and redownloading them..."
-                )
-                # Remove only files with 'corrupt' in the name
-                for f in corrupt_dir.glob("*corrupt*"):
-                    f.unlink()
-                corrupt_dir.rename(partial_dir)
-            elif (
-                partial_dir.exists()
-            ):  # Case were a collect_all was interrupted before completion and validation
-                logger.info(
-                    f"Data for {year} was not fully downloaded: checking if present files are valid..."
-                )
-                _validate_year(partial_dir, year, areas, exo_areas)
-                # Remove corrupt files (renamed by _validate_year) so they get re-downloaded
-                for f in partial_dir.glob("*corrupt*"):
-                    f.unlink()
-            else:
-                logger.info(f"No data for {year}: downloading...")
-                partial_dir.mkdir(parents=True)
 
-            # Launch download of history data for <year>
+            year_dir.mkdir(parents=True, exist_ok=True)
+
+            # collect_history skips areas that already have files
             collect_history(
-                output_dir=partial_dir, client=client, year=year, areas=areas, exo_areas=exo_areas
+                output_dir=year_dir, client=client, year=year, areas=areas, exo_areas=exo_areas
             )
 
-            # Validate history data for <year>
-            is_valid, issues = _validate_year(partial_dir, year, areas, exo_areas)
-            if is_valid:
-                partial_dir.rename(year_dir)
-                logger.info(f"{year}: validated and saved to {year_dir}")
-            else:
-                target = output_dir / f"{year}_corrupt"
-                partial_dir.rename(target)
-                logger.warning(f"{year}: VALIDATION FAILED, marked as corrupt")
+            # Sanitize: flag bad files so next collection re-downloads them
+            issues = sanitize_year(year_dir, year)
+            if issues:
+                logger.warning(f"{year}: validation issues:")
                 for issue in issues:
                     logger.warning(f"    - {issue}")
+            else:
+                logger.info(f"{year}: all files validated")
 
     if source in ("all", "ninja"):
         ninja_dir = output_dir / "renewable_ninja"
@@ -203,10 +179,10 @@ def collect_history(
     capacity for all areas. Each data type is saved as one file per area:
     demand_<area>.csv, production_<area>.csv, prices_<area>.csv,
     installed_capacity_<area>.csv. Per-area file checks allow resuming
-    interrupted runs without re-downloading already-collected areas.
+    interrupted collections without re-downloading already-collected areas.
 
     Args:
-        output_dir: Directory to write CSV files into (e.g. data/<year>_partial/).
+        output_dir: Directory to write CSV files into (e.g. data/<year>/).
         client: EntsoePandasClient (created by entsoe.set_client()).
         year: Calendar year to download.
         areas: Modeled country codes (default: DEFAULT_AREAS).
@@ -217,9 +193,11 @@ def collect_history(
     if exo_areas is None:
         exo_areas = list(DEFAULT_EXO_AREAS)
 
-    gap_report = Report.load(output_dir / "_gap_fill_report.csv") if (
-        output_dir / "_gap_fill_report.csv"
-    ).exists() else Report(output_dir)
+    gap_report = (
+        Report.load(output_dir / "_gap_fill_report.csv")
+        if (output_dir / "_gap_fill_report.csv").exists()
+        else Report(output_dir)
+    )
     start, end = cet_year_bounds(year)
     canon_idx = canonical_index(year)
     n_exp = expected_hours(year)
@@ -411,8 +389,8 @@ def _collect_timeseries(
             print("insufficient data (KO)")
             continue
 
-        print("OK", end="", flush=True) 
-        
+        print("OK", end="", flush=True)
+
         # Reindex onto canonical index and gap-fill
         gaps_filled = 0
         if isinstance(data, pd.DataFrame):
@@ -496,69 +474,53 @@ def collect_installed_capacity(client, areas, year):
     return result
 
 
-# ── Validation helper ──
+# ── Sanitization ──
 
 
-def _validate_year(year_dir, year, areas, exo_areas):
-    """Validate completeness of a year data directory.
+def sanitize_year(year_dir, year):
+    """Check integrity of CSV files in a year directory, rename corrupt ones.
 
-    Checks:
-        - All required per-area files exist
-        - Each hourly file has the expected number of rows
-        - No NaN values remain
+    Scans all *.csv files (excluding _gap_fill_report and already-flagged
+    *_corrupt* files). For timeseries files (identified by an 'hour' column),
+    validates row count and absence of NaN. Corrupt files are renamed to
+    *_corrupt so they are ignored by collect_history's skip logic and
+    re-downloaded on next collection.
+
+    Area-agnostic: validates whatever files exist, does not check completeness.
 
     Args:
-        year_dir: Path to the year directory (e.g. data/2021_partial).
-        year: The year (for computing expected hours).
-        areas: List of modeled area codes.
-        exo_areas: List of exogenous area codes.
+        year_dir: Path to data/<year>/ directory.
+        year: Calendar year (for computing expected row count).
 
     Returns:
-        (is_valid, issues) tuple. issues is a list of error strings.
+        List of issue strings (empty if all files OK).
     """
+    if not year_dir.exists():
+        return []
+
     issues = []
     n_expected = expected_hours(year)
 
-    def _check_timeseries_file(path, label):
-        """Hard-validate a per-area hourly CSV. Renames to *_corrupt on failure."""
-        if not path.exists():
-            issues.append(f"{path.name} missing")
-            logger.warning(f"{path.name} missing")
-            return
+    for path in sorted(year_dir.glob("*.csv")):
+        if path.name.startswith("_gap_fill_report") or "_corrupt" in path.name:
+            continue
+
         df = pd.read_csv(path)
+
+        # Only validate timeseries files (have an 'hour' column)
+        if "hour" not in df.columns:
+            continue
+
         if len(df) != n_expected:
-            issues.append(f"{path.name}: {len(df)} rows, expected {n_expected}")
-            logger.warning(f"{path.name}: {len(df)} rows, expected {n_expected}")
+            issue = f"{path.name}: {len(df)} rows, expected {n_expected}"
+            issues.append(issue)
+            logger.warning(issue)
             path.rename(path.with_stem(path.stem + "_corrupt"))
-        elif df.drop(columns=["hour"], errors="ignore").isna().any().any():
-            n_nan = df.drop(columns=["hour"], errors="ignore").isna().sum().sum()
-            issues.append(f"{path.name}: {n_nan} NaN values remain")
-            logger.warning(f"{path.name}: {n_nan} NaN values remain")
+        elif df.drop(columns=["hour"]).isna().any().any():
+            n_nan = int(df.drop(columns=["hour"]).isna().sum().sum())
+            issue = f"{path.name}: {n_nan} NaN values remain"
+            issues.append(issue)
+            logger.warning(issue)
             path.rename(path.with_stem(path.stem + "_corrupt"))
 
-    # Hard validation: demand and production for modeled areas
-    for area in areas:
-        _check_timeseries_file(year_dir / f"demand_{area}.csv", "demand")
-        _check_timeseries_file(year_dir / f"production_{area}.csv", "production")
-
-    # Hard validation: prices for exo areas (model inputs)
-    for area in exo_areas:
-        _check_timeseries_file(year_dir / f"prices_{area}.csv", "prices")
-
-    # Soft validation: prices for modeled areas (validation data, not model inputs)
-    for area in areas:
-        prices_path = year_dir / f"prices_{area}.csv"
-        if not prices_path.exists():
-            logger.warning(f"prices_{area}.csv missing (validation data, not critical)")
-        else:
-            df = pd.read_csv(prices_path)
-            if len(df) != n_expected:
-                logger.warning(f"prices_{area}.csv: {len(df)} rows, expected {n_expected}")
-
-    # Soft validation: installed capacity (no row-count check, not a time series)
-    for area in areas:
-        ic_path = year_dir / f"installed_capacity_{area}.csv"
-        if not ic_path.exists():
-            logger.warning(f"installed_capacity_{area}.csv missing (not critical)")
-
-    return len(issues) == 0, issues
+    return issues

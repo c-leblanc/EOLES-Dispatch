@@ -93,6 +93,7 @@ eoles-dispatch solve <name> [options]
 | `--solver highs` | LP solver (default: highs). Also: gurobi, cbc, glpk |
 | `--model-version standard` | Model variant: `standard` (full thermal dynamics) or `static_thermal` |
 | `--reports prices production` | Output reports to generate (also: `capa_on`, `FRtrade`) |
+| `--fulldiag` | Export all Pyomo variable values and constraint duals to `runs/<name>/diagnostics/` |
 
 ### Visualizing results
 
@@ -176,6 +177,8 @@ EOLES-Dispatch/
         ├── inputs/                 # Formatted model inputs
         ├── outputs/                # Model results (prices, production, ...)
         ├── scenario/               # Copy of the scenario used
+        ├── validation/             # Historical actuals for comparison (prices, production)
+        ├── diagnostics/            # Full variable/dual export (only with --fulldiag)
         └── viz.html                # Interactive report
 ```
 
