@@ -218,34 +218,37 @@ def _make_gapped_series(gap_start, gap_length, total=48):
 def test_interpolate_small_gap_linear(tmp_path):
     s = _make_gapped_series(gap_start=10, gap_length=2, total=48)
     report = Report(tmp_path)
-    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled, not_filled = interpolate_gaps(s, report=report, variable="test", area="XX")
     assert result.iloc[10] == pytest.approx(11.0, abs=0.5)
     assert result.iloc[11] == pytest.approx(12.0, abs=0.5)
     assert filled == 2
+    assert not_filled == 0
 
 
 def test_interpolate_no_gaps_passthrough(tmp_path):
     idx = pd.date_range("2023-06-01", periods=24, freq="h")
     s = pd.Series(np.ones(24), index=idx)
     report = Report(tmp_path)
-    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled, not_filled = interpolate_gaps(s, report=report, variable="test", area="XX")
     pd.testing.assert_series_equal(result, s)
     assert filled == 0
+    assert not_filled == 0
 
 
 def test_interpolate_preserves_index(tmp_path):
     s = _make_gapped_series(gap_start=5, gap_length=2, total=48)
     report = Report(tmp_path)
-    result, _ = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, _, _ = interpolate_gaps(s, report=report, variable="test", area="XX")
     pd.testing.assert_index_equal(result.index, s.index)
 
 
 def test_interpolate_fills_all_nans(tmp_path):
     s = _make_gapped_series(gap_start=20, gap_length=2, total=48)
     report = Report(tmp_path)
-    result, filled = interpolate_gaps(s, report=report, max_gap=3, variable="test", area="XX")
+    result, filled, not_filled = interpolate_gaps(s, report=report, variable="test", area="XX")
     assert result.isna().sum() == 0
     assert filled > 0
+    assert not_filled == 0
 
 
 # ── _is_production_usable ──

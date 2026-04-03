@@ -16,13 +16,11 @@ Called from:
                         to the collect_* functions, then saved to disk.
 
 Functions:
-    interpolate_gaps(series, report, max_gap=3, variable="", area="")
+    interpolate_gaps(series, report, variable="", area="", max_interpol=2, max_weeklyAnalog=72)
         Fill NaN gaps using cascading strategies:
-        1. Linear interpolation for gaps <= max_gap hours.
-        2. Same weekday +/-1 week for gaps <= 48h.
-        3. Same period +/-1 year for gaps <= 7 days.
-        4. Multi-year average for larger gaps.
-        5. Linear interpolation as last resort.
+        1. Linear interpolation for gaps <= max_interpol hours (if not at start/end).
+        2. Same weekday ±1-2 weeks for gaps <= max_weeklyAnalog hours.
+        3. No gap filling for gaps > max_weeklyAnalog hours (alert to user).
         Called from main_collect (collect_demand, collect_production,
         collect_exo_prices).
 
@@ -126,42 +124,44 @@ def _fill_from_analogue(series, gap_start, gap_length, offset):
     return filled_series
 
 
-def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
+def interpolate_gaps(series, report, variable="", area="", max_interpol=2, max_weeklyAnalog=72):
     """Fill NaN gaps using a cascade of temporal analogues.
 
     Strategy by gap size:
-      - ≤ max_gap: linear interpolation (signal barely changes)
-      - max_gap-48h: same weekday ±1 week (preserves daily + weekly cycle)
-      - 48h-7d: same week ±1 year (preserves seasonality)
-      - > 7d:   same period from other available years, with scaling
+      - ≤ max_interpol & not at the beginning or end of the series: linear interpolation (signal barely changes)
+      - max_interpol-max_weeklyAnalog: same weekday ±1-2 weeks (preserves daily + weekly cycle)
+      - > max_weeklyAnalaog: no gap filling and alert to user.
 
-    All filled gaps are logged with their size and the method used.
     If a GapFillReport is active, each operation is recorded in it.
 
     Args:
         series: Time series with potential NaN gaps.
-        max_gap: Maximum gap size (hours) for linear interpolation.
+        report: GapFillReport object to which gap filling report is appended.
         variable: Name of the variable (for reporting, e.g. "demand").
         area: Area code (for reporting, e.g. "FR").
+        max_interpol: Maximum gap size (hours) for linear interpolation.
+        max_weeklyAnalog: Maximum gap size (hours) for using same weekday ±1-2 weeks
     """
-    if series.isna().sum() == 0:
-        return series, 0
-
+        
     total_filled = 0
+    total_not_filled = 0
+    
+    if series.isna().sum() == 0:
+        return series, total_filled, total_not_filled
+
     result = series.copy()
     gaps = _find_gaps(result)
     hours_per_week = 7 * 24
-    # 52 weeks (364 days) as the year-analogue offset: preserves the day-of-week
-    # alignment exactly, which matters more for electricity demand than the precise
-    # calendar date. Using 365/366 days would misalign weekdays by 1-2 days.
-    hours_per_52_weeks = 52 * hours_per_week
 
     for gap_start, gap_length in gaps:
-        gap_hours = gap_length
-        gap_time = series.index[gap_start] if gap_start < len(series.index) else "?"
+        gap_time = series.index[gap_start]
+        gap_end = gap_start + gap_length
+
+        filled = False
+        method = ""
 
         # Strategy 1: linear interpolation for small gaps
-        if gap_hours <= max_gap:
+        if gap_length <= max_interpol and gap_start>0 and gap_end <len(series):
             lo = max(0, gap_start - 1)
             hi = min(len(result), gap_start + gap_length + 1)
             chunk = result.iloc[lo:hi].copy()
@@ -170,106 +170,41 @@ def interpolate_gaps(series, report, max_gap=3, variable="", area=""):
             result.iloc[gap_start : gap_start + gap_length] = chunk.iloc[
                 offset_in_chunk : offset_in_chunk + gap_length
             ].values
-            # logger.debug(f"  Gap at {gap_time} ({gap_hours}h): linear interpolation")
-            if report:
-                report.add(variable, area, gap_time, gap_hours, "linear_interpolation")
-            total_filled += gap_hours
-            continue
+            filled = True
+            method =  "linear_interpolation"
+            total_filled += gap_length
 
-        filled = False
-        method = ""
-
-        # Strategy 2: same weekday ±1 week (for gaps up to 48h)
-        if gap_hours <= 48:
-            for sign in [1, -1]:
-                offset = sign * hours_per_week
+        # Strategy 2: same weekday ±1-2 weeks
+        elif gap_length <= max_weeklyAnalog:
+            for week_offset in [1, -1, 2, -2]:
+                offset = week_offset * hours_per_week
                 fill = _fill_from_analogue(result, gap_start, gap_length, offset)
                 if fill is not None:
                     result.iloc[gap_start : gap_start + gap_length] = fill.values
-                    direction = "next" if sign > 0 else "previous"
-                    method = f"weekly_analogue_{direction}"
-                    # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week")
                     filled = True
+                    direction = "next" if week_offset > 0 else "previous"
+                    method = f"weekly_analogue_{direction}_±{abs(week_offset)}"
+                    total_filled += gap_length
                     break
-
+            # Alert - Could not fill gap
             if not filled:
-                for sign in [1, -1]:
-                    offset = sign * 2 * hours_per_week
-                    fill = _fill_from_analogue(result, gap_start, gap_length, offset)
-                    if fill is not None:
-                        result.iloc[gap_start : gap_start + gap_length] = fill.values
-                        direction = "next" if sign > 0 else "previous"
-                        method = f"weekly_analogue_{direction}_±2"
-                        # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} week (±2)")
-                        filled = True
-                        break
+                method = "NOT FILLED: NO APPROPRIATE METHOD"
+                total_not_filled += gap_length
+                logger.warning(
+                f"!!  Gap at {gap_time} ({gap_length}h): "
+                f"no analogue found, and linear interpolation unsuitable"
+                )
+        # Alert - Could not fill gap
+        else:
+            method = "NOT FILLED: GAP TOO LONG"
+            total_not_filled += gap_length
+            logger.warning(
+            f"!!  Gap too long for gap filling ({gap_length}h) at {gap_time}."
+            )
 
-        # Strategy 3: same weekday ±52 weeks / ~1 year (for gaps 48h-7d, or fallback).
-        # 52-week offset preserves the day-of-week alignment exactly.
-        if not filled and gap_hours <= hours_per_week:
-            for sign in [-1, 1]:
-                offset = sign * hours_per_52_weeks
-                fill = _fill_from_analogue(result, gap_start, gap_length, offset)
-                if fill is not None:
-                    result.iloc[gap_start : gap_start + gap_length] = fill.values
-                    direction = "next" if sign > 0 else "previous"
-                    method = f"yearly_analogue_{direction}"
-                    # logger.info(f"  Gap at {gap_time} ({gap_hours}h): filled from {direction} year")
-                    filled = True
-                    break
+        report.add(variable, area, gap_time, gap_length, method)
 
-        # Strategy 4: multi-year average (for gaps > 7d, or fallback).
-        # Same 52-week-multiple offsets for consistent weekday alignment.
-        if not filled:
-            candidates = []
-            for year_offset in [-1, 1, -2, 2]:
-                offset = year_offset * hours_per_52_weeks
-                fill = _fill_from_analogue(result, gap_start, gap_length, offset)
-                if fill is not None:
-                    candidates.append(fill.values)
-            if candidates:
-                avg = np.mean(candidates, axis=0)
-                result.iloc[gap_start : gap_start + gap_length] = avg
-                method = f"multi_year_average_{len(candidates)}y"
-                # logger.info(
-                #    f"  Gap at {gap_time} ({gap_hours}h): "
-                #    f"filled from {len(candidates)}-year average"
-                # )
-                filled = True
-
-        # Last resort: linear interpolation (better than zeros)
-        if not filled:
-            lo = max(0, gap_start - 1)
-            hi = min(len(result), gap_start + gap_length + 1)
-            chunk = result.iloc[lo:hi].copy()
-            interpolated = chunk.interpolate(method="linear")
-            offset_in_chunk = gap_start - lo
-            result.iloc[gap_start : gap_start + gap_length] = interpolated.iloc[
-                offset_in_chunk : offset_in_chunk + gap_length
-            ].values
-            method = "linear_interpolation_fallback"
-            # logger.warning(
-            #    f"  Gap at {gap_time} ({gap_hours}h): "
-            #    f"no analogue found, used linear interpolation as last resort"
-            # )
-
-        if report:
-            report.add(variable, area, gap_time, gap_hours, method)
-        total_filled += gap_hours
-
-    # Final safety net: no NaN should remain
-    remaining_nans = result.isna().sum()
-    if remaining_nans > 0:
-        # logger.warning(
-        #    f"  {remaining_nans} NaN values remain after gap-filling, "
-        #    f"forward-filling then back-filling"
-        # )
-        if report:
-            report.add(variable, area, "various", remaining_nans, "ffill_bfill_safety_net")
-        result = result.ffill().bfill()
-        total_filled += remaining_nans
-
-    return result, total_filled
+    return result, total_filled, total_not_filled
 
 
 # ── Gap-fill report class ──
@@ -326,7 +261,7 @@ class Report:
         csv_path = self.output_dir / "_gap_fill_report.csv"
 
         # Handle empty entries
-        if not self.entries:
+        if not csv_path.exists():
             txt_path = self.output_dir / "_gap_fill_report.txt"
             txt_path.write_text(
                 "Gap-fill report\n"
@@ -336,11 +271,8 @@ class Report:
             logger.info("  → _gap_fill_report.txt (no gaps)")
             return
 
-        # Load CSV to get the full data (in case entries were loaded from disk via load())
-        if csv_path.exists():
-            df = pd.read_csv(csv_path)
-        else:
-            df = pd.DataFrame(self.entries)
+        # Load CSV to get the full list of gap filllings
+        df = pd.read_csv(csv_path)
 
         # TXT — human-readable summary
         txt_path = self.output_dir / "_gap_fill_report.txt"
@@ -352,10 +284,14 @@ class Report:
         ]
 
         # Summary stats
-        total_gaps = len(df)
-        total_hours = df["gap_hours"].sum()
-        lines.append(f"Total gaps filled: {total_gaps}")
-        lines.append(f"Total hours filled: {int(total_hours)}")
+        filled_mask = ~df["method"].str.startswith("NOT FILLED:")
+        gaps_filled = filled_mask.sum()
+        gaps_not_filled = (~filled_mask).sum()
+        hours_filled = df.loc[filled_mask, "gap_hours"].sum()
+        hours_not_filled = df.loc[~filled_mask, "gap_hours"].sum()
+
+        lines.append(f"Gaps filled: {gaps_filled} ({int(hours_filled)}h)")
+        lines.append(f"Gaps not filled: {gaps_not_filled} ({int(hours_not_filled)}h)")
         lines.append("")
 
         # Breakdown by method
@@ -373,8 +309,20 @@ class Report:
             lines.append(f"  {var:20s} {area:5s}: {n:3d} gaps, {h:6d}h total, max {max_gap}h")
         lines.append("")
 
-        # Flag large gaps (>24h) as warnings
-        large = df[df["gap_hours"] > 24]
+        # Alert 1: Unfilled gaps (critical)
+        unfilled = df[~filled_mask]
+        if not unfilled.empty:
+            lines.append("❌ UNFILLED GAPS — CRITICAL:")
+            for _, row in unfilled.iterrows():
+                lines.append(
+                    f"  {row['variable']:20s} {row['area']:5s}: "
+                    f"{row['gap_start']} → {row['gap_end']} "
+                    f"({int(row['gap_hours'])}h, {row['method']})"
+                )
+            lines.append("")
+
+        # Alert 2: Large gaps (>24h) as warnings
+        large = df[(df["gap_hours"] > 24) & filled_mask]
         if not large.empty:
             lines.append("⚠ Large gaps (>24h) — review recommended:")
             for _, row in large.iterrows():
@@ -387,6 +335,6 @@ class Report:
 
         txt_path.write_text("\n".join(lines))
         logger.info(
-            f"  → _gap_fill_report.csv ({total_gaps} entries), "
-            f"_gap_fill_report.txt ({int(total_hours)}h filled)"
+            f"  → _gap_fill_report.csv ({gaps_filled+gaps_not_filled} entries), "
+            f"_gap_fill_report.txt ({int(hours_filled)}h filled, {int(hours_not_filled)}h not filled)"
         )

@@ -393,15 +393,17 @@ def _collect_timeseries(
 
         # Reindex onto canonical index and gap-fill
         gaps_filled = 0
+        gaps_not_filled = 0
         if isinstance(data, pd.DataFrame):
             if "hour" in data.columns:
                 data = data.set_index("hour")
             indexed = data.reindex(canon_idx)
             for col in indexed.columns:
-                indexed[col], col_filled = interpolate_gaps(
+                indexed[col], col_filled, col_not_filled = interpolate_gaps(
                     indexed[col], report=gap_report, variable=col, area=area
                 )
                 gaps_filled += col_filled
+                gaps_not_filled += col_not_filled
             if transform is not None:
                 indexed = transform(indexed)
             indexed.index.name = "hour"
@@ -409,7 +411,7 @@ def _collect_timeseries(
         else:
             # Series (demand, prices)
             series = data.reindex(canon_idx)
-            series, gaps_filled = interpolate_gaps(
+            series, gaps_filled, gaps_not_filled = interpolate_gaps(
                 series, report=gap_report, variable=ts_type, area=area
             )
             if transform is not None:
@@ -418,6 +420,8 @@ def _collect_timeseries(
 
         if gaps_filled > 0:
             print(f" [Gaps in data: {gaps_filled} data points filled]", end="", flush=True)
+        if gaps_not_filled > 0:
+            print(f" [❌ Gaps in data that could not be filled: {gaps_filled} data points]", end="", flush=True)
 
         path = output_dir / f"{ts_type}_{area}.csv"
         result[area].to_csv(path, index=False)
