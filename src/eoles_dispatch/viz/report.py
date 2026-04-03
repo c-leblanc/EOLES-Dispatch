@@ -23,8 +23,8 @@ from .charts_outputs import (
     html_energy_mix_overview,
     html_price_overview,
 )
-from .loaders import _load_metadata
-from .theme import _MONTH_LABELS
+from .loaders import load_metadata
+from .theme import MONTH_LABELS
 
 # ── Main orchestrator ──
 
@@ -41,7 +41,7 @@ def generate_report(run_dir, open_browser=True, validate=False):
     Tabs: France Inputs | France Outputs | Neighbors Inputs | Neighbors Outputs
     """
     run_dir = Path(run_dir)
-    meta = _load_metadata(run_dir)
+    meta = load_metadata(run_dir)
     all_areas = meta.get("areas", ["FR"])
     focus = "FR"
     other_areas = [a for a in all_areas if a != focus]
@@ -86,9 +86,9 @@ def generate_report(run_dir, open_browser=True, validate=False):
         ms = str(months_raw)
         if "-" in ms:
             a, b = ms.split("-", 1)
-            months_label = f" · {_MONTH_LABELS.get(int(a), a)}–{_MONTH_LABELS.get(int(b), b)}"
+            months_label = f" · {MONTH_LABELS.get(int(a), a)}–{MONTH_LABELS.get(int(b), b)}"
         else:
-            months_label = f" · {_MONTH_LABELS.get(int(ms), ms)} only"
+            months_label = f" · {MONTH_LABELS.get(int(ms), ms)} only"
     else:
         months_label = ""
     exec_time = meta.get("exec_time", "")

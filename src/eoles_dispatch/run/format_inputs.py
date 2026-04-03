@@ -48,19 +48,19 @@ def load_tv_inputs(
     valid_hours = set(hour_month["hour"])
 
     # 1. Load raw data and filter to the simulation period
-    production_raw = load_year_timeseries(
+    production_raw = _load_year_timeseries(
         label="production", data_dir=data_dir, year=simul_year, areas=areas
     )
     production = {area: _filter_to_posix(df, valid_hours) for area, df in production_raw.items()}
 
-    demand_raw = load_year_timeseries(
+    demand_raw = _load_year_timeseries(
         label="demand", data_dir=data_dir, year=simul_year, areas=areas
     )
     demand = {area: _filter_to_posix(df, valid_hours) for area, df in demand_raw.items()}
     demand = pd.concat([df.assign(area=area) for area, df in demand.items()], ignore_index=True)
     demand = demand[["area", "hour", "demand"]]
 
-    exo_prices_raw = load_year_timeseries(
+    exo_prices_raw = _load_year_timeseries(
         label="prices", data_dir=data_dir, year=simul_year, areas=exo_areas
     )
     exo_prices = {area: _filter_to_posix(df, valid_hours) for area, df in exo_prices_raw.items()}
@@ -90,9 +90,9 @@ def load_tv_inputs(
             technologies=["offshore", "onshore", "solar"],
         )
     else:
-        offshore = load_ninja_var(data_dir, f"offshore_{rn_horizon}", areas, valid_hours)
-        onshore = load_ninja_var(data_dir, f"onshore_{rn_horizon}", areas, valid_hours)
-        solar = load_ninja_var(data_dir, "solar", areas, valid_hours)
+        offshore = _load_ninja_var(data_dir, f"offshore_{rn_horizon}", areas, valid_hours)
+        onshore = _load_ninja_var(data_dir, f"onshore_{rn_horizon}", areas, valid_hours)
+        solar = _load_ninja_var(data_dir, "solar", areas, valid_hours)
         offshore["tec"] = "offshore"
         onshore["tec"] = "onshore"
         solar["tec"] = "solar"
@@ -179,7 +179,7 @@ def save_inputs(run_dir, tv_data, scenario_data, areas, exo_areas):
 # ── Data loaders and helpers ──
 
 
-def load_year_timeseries(label, data_dir, year, areas):
+def _load_year_timeseries(label, data_dir, year, areas):
     """Load <label> data for all areas from <data_dir>/<year>/<label>_<area>.csv.
 
     Args:
@@ -212,7 +212,7 @@ def load_year_timeseries(label, data_dir, year, areas):
     return result
 
 
-def load_ninja_var(data_dir, variable, areas, valid_hours):
+def _load_ninja_var(data_dir, variable, areas, valid_hours):
     """Load a Renewable Ninja capacity factor variable.
 
     Reads from data/renewable_ninja/<variable>.csv and filters to the

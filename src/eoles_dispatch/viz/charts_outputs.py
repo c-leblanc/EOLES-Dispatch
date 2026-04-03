@@ -14,18 +14,18 @@ from plotly.subplots import make_subplots
 
 from ..utils import hour_to_cet_month, posix_hours_to_dt
 from .loaders import (
-    _country_color,
-    _load_actual_prices,
-    _load_actual_production,
+    country_color,
+    load_actual_prices,
+    load_actual_production,
 )
 from .theme import (
-    _MONTH_LABELS,
+    MONTH_LABELS,
     AGG_COLORS,
     AGG_NEGATIVE,
     AGG_ORDER,
     LEGEND_BELOW,
     TEC_AGGREGATION,
-    _apply_theme,
+    apply_theme,
 )
 
 # ── Price overview ──
@@ -50,7 +50,7 @@ def html_price_overview(run_dir, areas, *, validate=False):
     actual_df = None
     actual_cols = []
     if validate:
-        actual_df = _load_actual_prices(run_dir)
+        actual_df = load_actual_prices(run_dir)
         actual_cols = [c for c in cols if actual_df is not None and c in actual_df.columns]
 
     table_html = _price_stats_table(df, cols, actual_df, actual_cols)
@@ -185,7 +185,7 @@ def _price_duration_curve(df, cols, actual_df=None, actual_cols=()):
     pct = np.linspace(0.005, 0.995, 200)
     y_min = 0
     for i, area in enumerate(cols):
-        color = _country_color(area, i)
+        color = country_color(area, i)
         values = df[area].dropna().values
         quantiles = np.quantile(values, 1 - pct)
         y_min = min(y_min, quantiles.min())
@@ -204,7 +204,7 @@ def _price_duration_curve(df, cols, actual_df=None, actual_cols=()):
         for i, area in enumerate(cols):
             if area not in actual_cols:
                 continue
-            color = _country_color(area, i)
+            color = country_color(area, i)
             values = actual_df[area].dropna().values
             quantiles = np.quantile(values, 1 - pct)
             y_min = min(y_min, quantiles.min())
@@ -225,7 +225,7 @@ def _price_duration_curve(df, cols, actual_df=None, actual_cols=()):
         height=500,
         yaxis_rangemode="tozero" if y_min >= 0 else "normal",
     )
-    _apply_theme(fig)
+    apply_theme(fig)
     fig.update_layout(legend=LEGEND_BELOW, margin=dict(l=45, r=15, t=15, b=40))
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
@@ -249,12 +249,12 @@ def chart_prices(run_dir, areas, *, validate=False):
     if not cols:
         return None
 
-    actual_df = _load_actual_prices(run_dir) if validate else None
+    actual_df = load_actual_prices(run_dir) if validate else None
     has_actual = actual_df is not None
 
     fig = go.Figure()
     for i, area in enumerate(cols):
-        color = _country_color(area, i)
+        color = country_color(area, i)
         label = f"{area} (simulated)" if has_actual and area in actual_df.columns else area
         fig.add_trace(
             go.Scatter(
@@ -270,7 +270,7 @@ def chart_prices(run_dir, areas, *, validate=False):
         for i, area in enumerate(cols):
             if area not in actual_df.columns:
                 continue
-            color = _country_color(area, i)
+            color = country_color(area, i)
             fig.add_trace(
                 go.Scatter(
                     x=actual_df["datetime"],
@@ -293,7 +293,7 @@ def chart_prices(run_dir, areas, *, validate=False):
         height=380,
         yaxis_rangemode="tozero" if y_min >= 0 else "normal",
     )
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_price_scatter(run_dir, areas):
@@ -302,7 +302,7 @@ def chart_price_scatter(run_dir, areas):
     if not path.exists():
         return None
     df = pd.read_csv(path)
-    actual_df = _load_actual_prices(run_dir)
+    actual_df = load_actual_prices(run_dir)
     if actual_df is None:
         return None
 
@@ -327,7 +327,7 @@ def chart_price_scatter(run_dir, areas):
                 y=sim_v[valid],
                 name=area,
                 mode="markers",
-                marker=dict(color=_country_color(area, i), size=3, opacity=0.3),
+                marker=dict(color=country_color(area, i), size=3, opacity=0.3),
             )
         )
 
@@ -352,7 +352,7 @@ def chart_price_scatter(run_dir, areas):
         yaxis_title="Simulated price (EUR/MWh)",
         height=450,
     )
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 # ── Energy mix chart builders ──
@@ -434,7 +434,7 @@ def _compute_energy_mix(run_dir, areas, validate=False):
     enermix_act = None
     demand_act = None
     if validate:
-        actual_df = _load_actual_production(run_dir)
+        actual_df = load_actual_production(run_dir)
         if actual_df is not None:
             _, agg_actual = _build_energy_agg(actual_df, area_list)
             if agg_actual is not None:
@@ -754,7 +754,7 @@ def chart_energy_mix_monthly(run_dir, areas):
         fig.update_yaxes(title_text="TWh", row=row, col=1)
 
     fig.update_layout(barmode="stack", height=600 * n)
-    _apply_theme(fig)
+    apply_theme(fig)
     fig.update_layout(margin_t=20)
     return fig
 
@@ -775,7 +775,7 @@ def chart_energy_mix_monthly_validate(run_dir, areas):
     agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
     tec_display_cols = [g for g in AGG_ORDER if g in agg_data.columns]
 
-    actual_df = _load_actual_production(run_dir)
+    actual_df = load_actual_production(run_dir)
     if actual_df is None:
         return chart_energy_mix_monthly(run_dir, areas)
 
@@ -815,8 +815,8 @@ def chart_energy_mix_monthly_validate(run_dir, areas):
             lbl
             for m in all_months
             for lbl in (
-                f"{_MONTH_LABELS.get(int(m[4:]), m)} (sim)",
-                f"{_MONTH_LABELS.get(int(m[4:]), m)} (act)",
+                f"{MONTH_LABELS.get(int(m[4:]), m)} (sim)",
+                f"{MONTH_LABELS.get(int(m[4:]), m)} (act)",
             )
         ]
 
@@ -857,7 +857,7 @@ def chart_energy_mix_monthly_validate(run_dir, areas):
         fig.update_yaxes(title_text="TWh", row=row, col=1)
 
     fig.update_layout(barmode="stack", height=600 * n)
-    _apply_theme(fig)
+    apply_theme(fig)
     fig.update_layout(margin_t=20)
     return fig
 
@@ -970,7 +970,7 @@ def chart_production(run_dir, areas):
             )
         fig.update_yaxes(title_text="GW", row=row, col=1)
     fig.update_layout(height=500 * n)
-    return _apply_theme(fig, extra_top_margin=20)
+    return apply_theme(fig, extra_top_margin=20)
 
 
 # ── Energy mix helpers ──
@@ -1014,7 +1014,7 @@ def _add_monthly_stacked_bars(
 
     months_present are YYYYMM strings (e.g. "201902"), sorted ascending.
     """
-    month_labels = [_MONTH_LABELS.get(int(m[4:]), m) for m in months_present]
+    month_labels = [MONTH_LABELS.get(int(m[4:]), m) for m in months_present]
     neg_present = [g for g in reversed(AGG_ORDER) if g in monthly_twh.columns and g in AGG_NEGATIVE]
     pos_present = [g for g in AGG_ORDER if g in monthly_twh.columns and g not in AGG_NEGATIVE]
     subplot_kwargs = {"row": row, "col": col} if row is not None else {}

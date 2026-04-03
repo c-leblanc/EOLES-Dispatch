@@ -104,7 +104,7 @@ AGG_ORDER = [
 
 # ── Other Labels ──
 
-_MONTH_LABELS = {
+MONTH_LABELS = {
     1: "Jan",
     2: "Feb",
     3: "Mar",
@@ -164,7 +164,7 @@ LEGEND_BELOW = dict(
 )
 
 
-def _apply_theme(fig, extra_top_margin=0, keep_legend=False):
+def apply_theme(fig, extra_top_margin=0, keep_legend=False):
     """Apply clean minimal theme to a figure."""
     layout = dict(_CLEAN_LAYOUT)
     if extra_top_margin:

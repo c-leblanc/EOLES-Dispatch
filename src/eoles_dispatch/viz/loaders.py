@@ -7,7 +7,7 @@ from ..utils import posix_hours_to_dt
 from .theme import AGG_COLORS, COUNTRY_COLORS, TEC_COLORS
 
 
-def _load_hourly(run_dir, filename, col_names):
+def load_hourly(run_dir, filename, col_names):
     path = run_dir / "inputs" / filename
     if not path.exists():
         return None
@@ -17,7 +17,7 @@ def _load_hourly(run_dir, filename, col_names):
     return df
 
 
-def _load_actual_prices(run_dir):
+def load_actual_prices(run_dir):
     """Load historical day-ahead prices from validation/ directory, if available."""
     path = run_dir / "validation" / "actual_prices.csv"
     if not path.exists():
@@ -28,7 +28,7 @@ def _load_actual_prices(run_dir):
     return df
 
 
-def _load_actual_production(run_dir):
+def load_actual_production(run_dir):
     """Load historical generation data from validation/actual_production.csv.
 
     Returns None if the file is absent (e.g. data collection was skipped).
@@ -39,7 +39,7 @@ def _load_actual_production(run_dir):
     return pd.read_csv(path)
 
 
-def _load_metadata(run_dir):
+def load_metadata(run_dir):
     meta_path = run_dir / "run.yaml"
     if meta_path.exists():
         with open(meta_path) as f:
@@ -47,7 +47,7 @@ def _load_metadata(run_dir):
     return {}
 
 
-def _country_color(area, idx=0):
+def country_color(area, idx=0):
     return COUNTRY_COLORS.get(area, f"hsl({(idx * 51) % 360}, 70%, 50%)")
 
 

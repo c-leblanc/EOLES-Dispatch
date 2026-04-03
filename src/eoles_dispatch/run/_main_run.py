@@ -407,8 +407,6 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
         if df.empty:
             continue
 
-        # TODO: this RAW_TO_AGG aggregation loop (raw cols → agg categories, MW→GW)
-        # is the canonical implementation. Extract to a shared helper in collect/ or utils.
         agg_cols = {}
         for raw_col, agg_name in RAW_TO_AGG.items():
             if raw_col not in df.columns:
@@ -452,7 +450,7 @@ def _copy_actual_production(data_dir, run_dir, year, areas, months):
     combined.to_csv(validation_dir / "actual_production.csv", index=False)
 
 
-def check_requirements(data_dir, year, areas, exo_areas, actCF=False, rn_horizon="current"):
+def _check_requirements(data_dir, year, areas, exo_areas, actCF=False, rn_horizon="current"):
     """Check if all files needed for a run are present.
 
     Pure query — no filesystem mutations. A file renamed to *_corrupt
@@ -534,18 +532,18 @@ def _ensure_data_available(data_dir, year, areas, exo_areas, actCF=False, rn_hor
         sanitize_year(year_dir, year)
 
     # Check what's missing
-    source, missing_files = check_requirements(
+    source, missing_files = _check_requirements(
         data_dir, year, areas, exo_areas, actCF=actCF, rn_horizon=rn_horizon
     )
 
     if source is None:
         return
 
-    logger.info(f"Missing data: {missing_files}. Launching collection (source={source})...")
+    logger.info(f"Missing data: {len(missing_files)} files. Launching collection (source={source})...")
     collect_all(data_dir, year, year + 1, areas=areas, exo_areas=exo_areas, source=source)
 
     # Re-verify
-    still_source, still_missing = check_requirements(
+    still_source, still_missing = _check_requirements(
         data_dir, year, areas, exo_areas, actCF=actCF, rn_horizon=rn_horizon
     )
     if still_source is not None:

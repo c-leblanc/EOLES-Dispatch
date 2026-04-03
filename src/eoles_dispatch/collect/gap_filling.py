@@ -40,7 +40,6 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -124,7 +123,7 @@ def _fill_from_analogue(series, gap_start, gap_length, offset):
     return filled_series
 
 
-def interpolate_gaps(series, report, variable="", area="", max_interpol=2, max_weeklyAnalog=72):
+def interpolate_gaps(series, report, variable="", area="", max_interpol=2, max_weeklyAnalog=120):
     """Fill NaN gaps using a cascade of temporal analogues.
 
     Strategy by gap size:

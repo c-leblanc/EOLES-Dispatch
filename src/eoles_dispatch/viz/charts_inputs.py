@@ -4,12 +4,12 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .loaders import _country_color, _load_hourly
-from .theme import AGG_COLORS, AGG_ORDER, TEC_AGGREGATION, _apply_theme
+from .loaders import country_color, load_hourly
+from .theme import AGG_COLORS, AGG_ORDER, TEC_AGGREGATION, apply_theme
 
 
 def chart_demand(run_dir, areas):
-    df = _load_hourly(run_dir, "demand.csv", ["area", "hour", "value"])
+    df = load_hourly(run_dir, "demand.csv", ["area", "hour", "value"])
     if df is None:
         return None
     df = df[df["area"].isin(areas)]
@@ -24,15 +24,15 @@ def chart_demand(run_dir, areas):
                 y=sub["value"],
                 name=area,
                 mode="lines",
-                line=dict(color=_country_color(area, i), width=1),
+                line=dict(color=country_color(area, i), width=1),
             )
         )
     fig.update_layout(title="Hourly demand", yaxis_title="GW", height=380)
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_vre_profiles(run_dir, areas):
-    df = _load_hourly(run_dir, "vre_profiles.csv", ["area", "tec", "hour", "value"])
+    df = load_hourly(run_dir, "vre_profiles.csv", ["area", "tec", "hour", "value"])
     if df is None:
         return None
     df = df[df["area"].isin(areas)]
@@ -62,7 +62,7 @@ def chart_vre_profiles(run_dir, areas):
                     y=sub["value"],
                     name=area,
                     mode="lines",
-                    line=dict(color=_country_color(area, i), width=1),
+                    line=dict(color=country_color(area, i), width=1),
                     legendgroup=area,
                     showlegend=(row == 1),
                 ),
@@ -75,11 +75,11 @@ def chart_vre_profiles(run_dir, areas):
         height=220 * len(tecs),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
-    return _apply_theme(fig, extra_top_margin=20)
+    return apply_theme(fig, extra_top_margin=20)
 
 
 def chart_nmd(run_dir, areas):
-    df = _load_hourly(run_dir, "nmd.csv", ["area", "hour", "value"])
+    df = load_hourly(run_dir, "nmd.csv", ["area", "hour", "value"])
     if df is None:
         return None
     df = df[df["area"].isin(areas)]
@@ -94,15 +94,15 @@ def chart_nmd(run_dir, areas):
                 y=sub["value"],
                 name=area,
                 mode="lines",
-                line=dict(color=_country_color(area, i), width=1),
+                line=dict(color=country_color(area, i), width=1),
             )
         )
     fig.update_layout(title="Non-market-dependent production", yaxis_title="GW", height=350)
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_exo_prices(run_dir, areas):
-    df = _load_hourly(run_dir, "exoPrices.csv", ["area", "hour", "value"])
+    df = load_hourly(run_dir, "exoPrices.csv", ["area", "hour", "value"])
     if df is None:
         return None
     df = df[df["area"].isin(areas)]
@@ -121,7 +121,7 @@ def chart_exo_prices(run_dir, areas):
             )
         )
     fig.update_layout(title="Exogenous day-ahead prices", yaxis_title="EUR/MWh", height=380)
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_nuclear_availability(run_dir, areas):
@@ -145,7 +145,7 @@ def chart_nuclear_availability(run_dir, areas):
                 y=sub["value"],
                 name=area,
                 mode="lines+markers",
-                line=dict(color=_country_color(area, i), width=2),
+                line=dict(color=country_color(area, i), width=2),
                 marker=dict(size=4),
             )
         )
@@ -155,7 +155,7 @@ def chart_nuclear_availability(run_dir, areas):
         yaxis_range=[0, 1.05],
         height=350,
     )
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_lake_inflows(run_dir, areas):
@@ -175,7 +175,7 @@ def chart_lake_inflows(run_dir, areas):
                 x=sub["date"],
                 y=sub["value"],
                 name=area,
-                marker_color=_country_color(area, i),
+                marker_color=country_color(area, i),
             )
         )
     fig.update_layout(
@@ -184,7 +184,7 @@ def chart_lake_inflows(run_dir, areas):
         barmode="group",
         height=350,
     )
-    return _apply_theme(fig)
+    return apply_theme(fig)
 
 
 def chart_capacity_mix(run_dir, areas):
@@ -273,7 +273,7 @@ def chart_capacity_mix(run_dir, areas):
             legend=pie_legend,
             margin=dict(l=20, r=160, t=60, b=20),
         )
-    return _apply_theme(fig, keep_legend=True)
+    return apply_theme(fig, keep_legend=True)
 
 
 def chart_interconnections(run_dir, areas):
@@ -305,4 +305,4 @@ def chart_interconnections(run_dir, areas):
         height=max(300, 55 * len(all_areas)),
         width=max(400, 55 * len(all_areas)),
     )
-    return _apply_theme(fig)
+    return apply_theme(fig)
