@@ -23,7 +23,7 @@ from .charts_outputs import (
     html_energy_mix_overview,
     html_price_overview,
 )
-from .loaders import load_metadata
+from .loaders import load_metadata, prepare_validation_data
 from .theme import MONTH_LABELS
 
 # ── Main orchestrator ──
@@ -45,6 +45,9 @@ def generate_report(run_dir, open_browser=True, validate=False):
     all_areas = meta.get("areas", ["FR"])
     focus = "FR"
     other_areas = [a for a in all_areas if a != focus]
+
+    if validate:
+        prepare_validation_data(run_dir, meta)
 
     has_outputs = (run_dir / "outputs").exists() and any((run_dir / "outputs").glob("*.csv"))
     output_charts = _OUTPUT_CHARTS_VALIDATE if validate else _OUTPUT_CHARTS

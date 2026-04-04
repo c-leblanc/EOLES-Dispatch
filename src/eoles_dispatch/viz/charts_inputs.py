@@ -4,17 +4,15 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .loaders import country_color, load_hourly
-from .theme import AGG_COLORS, AGG_ORDER, TEC_AGGREGATION, apply_theme
+from .loaders import load_inputs
+from .theme import AGG_COLORS, AGG_ORDER, TEC_AGGREGATION, apply_theme, country_color
 
 
 def chart_demand(run_dir, areas):
-    df = load_hourly(run_dir, "demand.csv", ["area", "hour", "value"])
-    if df is None:
+    df = load_inputs(run_dir, areas, "demand.csv", ["area", "hour", "value"])
+    if df is None: 
         return None
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
+    
     fig = go.Figure()
     for i, area in enumerate(sorted(df["area"].unique())):
         sub = df[df["area"] == area]
@@ -32,12 +30,10 @@ def chart_demand(run_dir, areas):
 
 
 def chart_vre_profiles(run_dir, areas):
-    df = load_hourly(run_dir, "vre_profiles.csv", ["area", "tec", "hour", "value"])
-    if df is None:
+    df = load_inputs(run_dir, areas, "vre_profiles.csv", ["area", "tec", "hour", "value"])
+    if df is None: 
         return None
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
+    
     tecs = [t for t in ["onshore", "offshore", "solar", "river"] if t in df["tec"].unique()]
     labels = {
         "onshore": "Onshore wind",
@@ -79,12 +75,10 @@ def chart_vre_profiles(run_dir, areas):
 
 
 def chart_nmd(run_dir, areas):
-    df = load_hourly(run_dir, "nmd.csv", ["area", "hour", "value"])
+    df = load_inputs(run_dir, areas, "nmd.csv", ["area", "hour", "value"])
     if df is None:
         return None
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
+
     fig = go.Figure()
     for i, area in enumerate(sorted(df["area"].unique())):
         sub = df[df["area"] == area]
@@ -102,12 +96,10 @@ def chart_nmd(run_dir, areas):
 
 
 def chart_exo_prices(run_dir, areas):
-    df = load_hourly(run_dir, "exoPrices.csv", ["area", "hour", "value"])
+    df = load_inputs(run_dir, areas, "exoPrices.csv", ["area", "hour", "value"])
     if df is None:
         return None
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
+
     fig = go.Figure()
     for i, area in enumerate(sorted(df["area"].unique())):
         sub = df[df["area"] == area]
@@ -125,17 +117,10 @@ def chart_exo_prices(run_dir, areas):
 
 
 def chart_nuclear_availability(run_dir, areas):
-    path = run_dir / "inputs" / "nucMaxAF.csv"
-    if not path.exists():
+    df = load_inputs(run_dir, areas, "nucMaxAF.csv", ["area", "week", "value"])
+    if df is None:
         return None
-    df = pd.read_csv(path, header=None, names=["area", "week", "value"])
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
-    week_str = df["week"].astype(str).str.zfill(6)
-    df["date"] = pd.to_datetime(
-        week_str.str[:4] + "-W" + week_str.str[4:] + "-1", format="%Y-W%W-%w", errors="coerce"
-    )
+    
     fig = go.Figure()
     for i, area in enumerate(sorted(df["area"].unique())):
         sub = df[df["area"] == area]
@@ -159,14 +144,10 @@ def chart_nuclear_availability(run_dir, areas):
 
 
 def chart_lake_inflows(run_dir, areas):
-    path = run_dir / "inputs" / "lake_inflows.csv"
-    if not path.exists():
+    df = load_inputs(run_dir, areas, "lake_inflows.csv", ["area", "month", "value"])
+    if df is None:
         return None
-    df = pd.read_csv(path, header=None, names=["area", "month", "value"])
-    df = df[df["area"].isin(areas)]
-    if df.empty:
-        return None
-    df["date"] = pd.to_datetime(df["month"], format="%Y%m", errors="coerce")
+    
     fig = go.Figure()
     for i, area in enumerate(sorted(df["area"].unique())):
         sub = df[df["area"] == area]
@@ -188,12 +169,8 @@ def chart_lake_inflows(run_dir, areas):
 
 
 def chart_capacity_mix(run_dir, areas):
-    path = run_dir / "inputs" / "capa.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path, header=None, names=["area", "tec", "value"])
-    df = df[(df["value"] > 0) & (df["area"].isin(areas))]
-    if df.empty:
+    df = load_inputs(run_dir, areas, "capa.csv", ["area", "tec", "value"])
+    if df is None:
         return None
 
     df["group"] = df["tec"].map(TEC_AGGREGATION).fillna(df["tec"])
@@ -201,8 +178,6 @@ def chart_capacity_mix(run_dir, areas):
 
     area_list = [a for a in areas if a in agg["area"].values]
     n = len(area_list)
-    if n == 0:
-        return None
 
     pie_legend = dict(
         orientation="v",
@@ -277,13 +252,10 @@ def chart_capacity_mix(run_dir, areas):
 
 
 def chart_interconnections(run_dir, areas):
-    path = run_dir / "inputs" / "links.csv"
-    if not path.exists():
+    df = load_inputs(run_dir, areas, "links.csv", ["exporter", "importer", "value"])
+    if df is None:
         return None
-    df = pd.read_csv(path, header=None, names=["exporter", "importer", "value"])
-    df = df[df["exporter"].isin(areas) | df["importer"].isin(areas)]
-    if df.empty:
-        return None
+
     all_areas = sorted(set(df["exporter"].tolist() + df["importer"].tolist()))
     matrix = pd.DataFrame(0.0, index=all_areas, columns=all_areas)
     for _, row in df.iterrows():

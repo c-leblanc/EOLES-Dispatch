@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from eoles_dispatch.collect._main_collect import sanitize_year
-from eoles_dispatch.run._main_run import _copy_actual_prices, check_requirements
+from eoles_dispatch.run._main_run import check_requirements
 from eoles_dispatch.run.compute import (
     compute_hydro_limits,
     compute_lake_inflows,
@@ -23,6 +23,7 @@ from eoles_dispatch.utils import (
     expected_hours,
     to_posix_hours,
 )
+from eoles_dispatch.viz.loaders import _prepare_actual_prices
 
 # ---------------------------------------------------------------------------
 # cet_to_utc (now in timezone.py)
@@ -519,7 +520,7 @@ class TestCheckRequirements:
 
 
 # ---------------------------------------------------------------------------
-# _copy_actual_prices (run._main_run)
+# _prepare_actual_prices (viz.loaders)
 # ---------------------------------------------------------------------------
 
 
@@ -537,7 +538,7 @@ def _make_prices_csvs(year_dir, year, areas, n_hours=None):
         df.to_csv(year_dir / f"prices_{area}.csv", index=False)
 
 
-class TestCopyActualPrices:
+class TestPrepareActualPrices:
     def test_creates_validation_file(self, tmp_path):
         """Should create validation/actual_prices.csv when source exists."""
         year, areas = 2021, ["FR", "BE"]
@@ -545,17 +546,17 @@ class TestCopyActualPrices:
         _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
+        _prepare_actual_prices(data_dir, run_dir, year, areas, months=None)
         assert (run_dir / "validation" / "actual_prices.csv").exists()
 
-    def test_skips_silently_when_source_missing(self, tmp_path):
-        """Should not raise and should not create validation/ if source is absent."""
+    def test_raises_when_source_missing(self, tmp_path):
+        """Should raise FileNotFoundError if source price files are absent."""
         data_dir = tmp_path / "data"
         (data_dir / "2021").mkdir(parents=True)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        _copy_actual_prices(data_dir, run_dir, 2021, ["FR"], months=None)
-        assert not (run_dir / "validation").exists()
+        with pytest.raises(FileNotFoundError, match="Price data missing"):
+            _prepare_actual_prices(data_dir, run_dir, 2021, ["FR"], months=None)
 
     def test_hour_column_is_posix_int(self, tmp_path):
         """Output hour column must be POSIX hours (int), not datetimes."""
@@ -564,7 +565,7 @@ class TestCopyActualPrices:
         _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        _copy_actual_prices(data_dir, run_dir, year, areas, months=None)
+        _prepare_actual_prices(data_dir, run_dir, year, areas, months=None)
         out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
         assert pd.api.types.is_integer_dtype(out["hour"])
 
@@ -576,7 +577,7 @@ class TestCopyActualPrices:
         _make_prices_csvs(data_dir / str(year), year, all_areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        _copy_actual_prices(data_dir, run_dir, year, ["FR"], months=None)
+        _prepare_actual_prices(data_dir, run_dir, year, ["FR"], months=None)
         out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
         assert "FR" in out.columns
         assert "BE" not in out.columns
@@ -589,6 +590,6 @@ class TestCopyActualPrices:
         _make_prices_csvs(data_dir / str(year), year, areas)
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        _copy_actual_prices(data_dir, run_dir, year, areas, months=(1, 3))
+        _prepare_actual_prices(data_dir, run_dir, year, areas, months=(1, 3))
         out = pd.read_csv(run_dir / "validation" / "actual_prices.csv")
         assert len(out) < expected_hours(year)

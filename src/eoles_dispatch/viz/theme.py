@@ -13,6 +13,9 @@ COUNTRY_COLORS = {
     "IT": "#27AE60",
     "CH": "#9B59B6",
 }
+def country_color(area, idx=0):
+    return COUNTRY_COLORS.get(area, f"hsl({(idx * 51) % 360}, 70%, 50%)")
+
 
 TEC_COLORS = {
     "net_exports": "#adb5bd",
@@ -30,6 +33,9 @@ TEC_COLORS = {
     "nmd": "#262626",
     "net_imports": "#adb5bd",
 }
+def tec_color(tec):
+    return TEC_COLORS.get(tec, AGG_COLORS.get(tec, "#888888"))
+
 
 # Display labels for technologies.
 # Derived from MODEL_TO_AGG for model-level sub-types, plus entries for

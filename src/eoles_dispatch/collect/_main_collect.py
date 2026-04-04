@@ -28,8 +28,9 @@ Data structure:
         demand_<area>.csv             - hourly demand for one area (GW)
         installed_capacity_<area>.csv - installed capacity: ['tec', 'value'] (GW)
         prices_<area>.csv             - hourly day-ahead prices for one area (EUR/MWh)
-                                        covers both modeled areas (validation) and
-                                        exo areas (model input); areas never overlap
+                                        exo areas (model input) always collected;
+                                        modeled areas (validation only) collected on
+                                        demand by viz --validate or eoles-dispatch collect
         _gap_fill_report.csv/txt      - gap-filling audit trail
     data/renewable_ninja/
         solar.csv, onshore_current.csv, ...  - capacity factor profiles
@@ -83,7 +84,14 @@ logger = logging.getLogger(__name__)
 
 
 def collect_all(
-    output_dir, start_year, end_year, areas=None, exo_areas=None, source="all", force=False
+    output_dir,
+    start_year,
+    end_year,
+    areas=None,
+    exo_areas=None,
+    source="all",
+    force=False,
+    include_area_prices=True,
 ):
     if areas is None:
         areas = list(DEFAULT_AREAS)
@@ -111,7 +119,12 @@ def collect_all(
 
             # collect_history skips areas that already have files
             collect_history(
-                output_dir=year_dir, client=client, year=year, areas=areas, exo_areas=exo_areas
+                output_dir=year_dir,
+                client=client,
+                year=year,
+                areas=areas,
+                exo_areas=exo_areas,
+                include_area_prices=include_area_prices,
             )
 
             # Sanitize: flag bad files so next collection re-downloads them
@@ -172,6 +185,7 @@ def collect_history(
     year,
     areas=None,
     exo_areas=None,
+    include_area_prices=True,
 ):
     """Download all time-varying ENTSO-E data for a single year and save to CSV.
 
@@ -187,6 +201,10 @@ def collect_history(
         year: Calendar year to download.
         areas: Modeled country codes (default: DEFAULT_AREAS).
         exo_areas: Non-modeled country codes for price data (default: DEFAULT_EXO_AREAS).
+        include_area_prices: If True (default), also download prices for
+            modeled areas. Set to False during ``create`` to skip validation-only
+            data; prices for modeled areas are then fetched on demand by
+            ``viz --validate``.
     """
     if areas is None:
         areas = list(DEFAULT_AREAS)
@@ -224,7 +242,7 @@ def collect_history(
         ),
         (
             "prices",
-            list(exo_areas) + list(areas),
+            list(exo_areas) + (list(areas) if include_area_prices else []),
             dict(
                 entsoe_fetch=lambda area: entsoe.fetch_day_ahead_prices(client, area, start, end),
                 elexon_fetch=lambda: elexon.fetch_day_ahead_prices(start, end),
@@ -421,7 +439,11 @@ def _collect_timeseries(
         if gaps_filled > 0:
             print(f" [Gaps in data: {gaps_filled} data points filled]", end="", flush=True)
         if gaps_not_filled > 0:
-            print(f" [❌ Gaps in data that could not be filled: {gaps_filled} data points]", end="", flush=True)
+            print(
+                f" [❌ Gaps in data that could not be filled: {gaps_filled} data points]",
+                end="",
+                flush=True,
+            )
 
         path = output_dir / f"{ts_type}_{area}.csv"
         result[area].to_csv(path, index=False)

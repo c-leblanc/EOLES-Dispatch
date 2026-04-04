@@ -1,6 +1,7 @@
 """Output chart builders (post-solve data from outputs/ folder)."""
 
 import io
+import logging
 import re
 
 import matplotlib
@@ -10,23 +11,25 @@ import pandas as pd
 import plotly.graph_objects as go
 
 matplotlib.use("Agg")
-from plotly.subplots import make_subplots
+from plotly.subplots import make_subplots  # noqa: E402
 
-from ..utils import hour_to_cet_month, posix_hours_to_dt
-from .loaders import (
-    country_color,
+from ..utils import hour_to_cet_month, posix_hours_to_dt  # noqa: E402
+from .loaders import (  # noqa: E402
     load_actual_prices,
     load_actual_production,
 )
-from .theme import (
-    MONTH_LABELS,
+from .theme import (  # noqa: E402
     AGG_COLORS,
     AGG_NEGATIVE,
     AGG_ORDER,
     LEGEND_BELOW,
+    MONTH_LABELS,
     TEC_AGGREGATION,
     apply_theme,
+    country_color,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── Price overview ──
 
@@ -41,10 +44,12 @@ def html_price_overview(run_dir, areas, *, validate=False):
     """
     path = run_dir / "outputs" / "prices.csv"
     if not path.exists():
+        logger.warning("prices.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     cols = [c for c in areas if c in df.columns]
     if not cols:
+        logger.warning("prices.csv: no data for requested areas.")
         return None
 
     actual_df = None
@@ -240,13 +245,16 @@ def chart_prices(run_dir, areas, *, validate=False):
     """
     path = run_dir / "outputs" / "prices.csv"
     if not path.exists():
+        logger.warning("prices.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     if "hour" not in df.columns:
+        logger.warning("prices.csv: missing 'hour' column.")
         return None
     df["datetime"] = posix_hours_to_dt(df["hour"])
     cols = [c for c in areas if c in df.columns]
     if not cols:
+        logger.warning("prices.csv: no data for requested areas.")
         return None
 
     actual_df = load_actual_prices(run_dir) if validate else None
@@ -300,6 +308,7 @@ def chart_price_scatter(run_dir, areas):
     """Scatter plot of simulated vs actual prices (when historical data is available)."""
     path = run_dir / "outputs" / "prices.csv"
     if not path.exists():
+        logger.warning("prices.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     actual_df = load_actual_prices(run_dir)
@@ -308,12 +317,14 @@ def chart_price_scatter(run_dir, areas):
 
     cols = [c for c in areas if c in df.columns and c in actual_df.columns]
     if not cols:
+        logger.warning("price_scatter: no common areas between simulated and actual data.")
         return None
 
     merged = df[["hour"] + cols].merge(
         actual_df[["hour"] + cols], on="hour", suffixes=("_sim", "_act")
     )
     if merged.empty:
+        logger.warning("price_scatter: no overlapping hours between simulated and actual data.")
         return None
 
     fig = go.Figure()
@@ -409,13 +420,16 @@ def _compute_energy_mix(run_dir, areas, validate=False):
     """
     path = run_dir / "outputs" / "production.csv"
     if not path.exists():
+        logger.warning("production.csv: file not found in outputs/.")
         return [], None, None, None, None
     df = pd.read_csv(path)
     if "hour" not in df.columns or "area" not in df.columns:
+        logger.warning("production.csv: missing 'hour' or 'area' column.")
         return [], None, None, None, None
 
     area_list, agg_data = _build_energy_agg(df, areas)
     if not area_list:
+        logger.warning("production.csv: no data for requested areas.")
         return [], None, None, None, None
 
     tec_cols_sim = [g for g in AGG_ORDER if g in agg_data.columns]
@@ -724,13 +738,16 @@ def chart_energy_mix_monthly(run_dir, areas):
     """Monthly energy mix: stacked bar chart by month, one subplot per area."""
     path = run_dir / "outputs" / "production.csv"
     if not path.exists():
+        logger.warning("production.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     if "hour" not in df.columns or "area" not in df.columns:
+        logger.warning("production.csv: missing 'hour' or 'area' column.")
         return None
 
     area_list, agg_data = _build_energy_agg(df, areas)
     if not area_list:
+        logger.warning("production.csv: no data for requested areas.")
         return None
 
     agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
@@ -763,13 +780,16 @@ def chart_energy_mix_monthly_validate(run_dir, areas):
     """Monthly energy mix: months interleaved (sim / act) per area (--validate mode)."""
     path = run_dir / "outputs" / "production.csv"
     if not path.exists():
+        logger.warning("production.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     if "hour" not in df.columns or "area" not in df.columns:
+        logger.warning("production.csv: missing 'hour' or 'area' column.")
         return None
 
     area_list, agg_data = _build_energy_agg(df, areas)
     if not area_list:
+        logger.warning("production.csv: no data for requested areas.")
         return None
 
     agg_data["month"] = hour_to_cet_month(agg_data["hour"])  # "YYYYMM" in CET
@@ -866,12 +886,15 @@ def chart_production(run_dir, areas):
     """Stacked area production mix with aggregated technologies."""
     path = run_dir / "outputs" / "production.csv"
     if not path.exists():
+        logger.warning("production.csv: file not found in outputs/.")
         return None
     df = pd.read_csv(path)
     if "hour" not in df.columns or "area" not in df.columns:
+        logger.warning("production.csv: missing 'hour' or 'area' column.")
         return None
     df = df[df["area"].isin(areas)]
     if df.empty:
+        logger.warning("production.csv: no data for requested areas.")
         return None
 
     df["datetime"] = posix_hours_to_dt(df["hour"])
