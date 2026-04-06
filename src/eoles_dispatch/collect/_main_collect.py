@@ -252,7 +252,7 @@ def collect_history(
     ]
 
     for ts_type, area_list, config in ts_configs:
-        logger.info(f"=== {ts_type.capitalize()} ===")
+        logger.info(f"=== {ts_type.capitalize()} (year: {year}) ===")
         missing = [a for a in area_list if not (output_dir / f"{ts_type}_{a}.csv").exists()]
         if not missing:
             logger.info(f"  → all {ts_type} files already exist, skipping")
@@ -366,7 +366,7 @@ def _collect_timeseries(
                 data = raw
         except Exception as e:
             if area == "UK":
-                print(" no data at ENTSO-E, try Elexon...", end="", flush=True)
+                print("no data at ENTSO-E, try Elexon...", end="", flush=True)
             else:
                 print(f"FAILED ({type(e).__name__})")
                 logger.warning("%s %s error: %s", ts_type.capitalize(), area, e)

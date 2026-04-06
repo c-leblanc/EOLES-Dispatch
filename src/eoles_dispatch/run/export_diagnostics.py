@@ -195,7 +195,7 @@ def _build_summary(model, var_stats: dict, dual_stats: dict) -> dict:
     for sname in ("a", "exo_a", "h", "tec", "vre", "thr", "sto", "frr", "no_frr", "week", "month"):
         if hasattr(model, sname):
             s = getattr(model, sname)
-            members = sorted(s)
+            members = [m.item() if hasattr(m, "item") else m for m in sorted(s)]
             sets_info[sname] = {"size": len(members), "members": members}
 
     return {

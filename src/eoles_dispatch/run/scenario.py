@@ -76,9 +76,11 @@ def extract_scenario(scenario_path, areas, exo_areas, hour_month):
     links = pd.melt(
         _read_scenario_table(scenario_path, "links"), id_vars="exporter", var_name="importer"
     )
-    links = links[(links["importer"].isin(areas)) & (links["exporter"].isin(areas))][
-        ["importer", "exporter", "value"]
-    ]
+    links = links[
+        (links["importer"].isin(areas))
+        & (links["exporter"].isin(areas))
+        & (links["importer"] != links["exporter"])
+    ][["importer", "exporter", "value"]]
 
     exo_EX = pd.melt(
         _read_scenario_table(scenario_path, "exo_EX"), id_vars="exporter", var_name="importer"
